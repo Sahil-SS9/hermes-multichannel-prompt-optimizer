@@ -38,7 +38,8 @@ This pattern repeats across every conversation. Over a month, the savings are me
 
 ## Requirements
 
-- **Hermes Agent** with the `pre_user_message` plugin hook. This hook is required for CLI/TUI rewrites to work. If your Hermes build is missing it, the gateway path (Discord/Telegram/…) still works via `pre_gateway_dispatch`.
+- **Hermes Agent** with the `pre_user_message` plugin hook. This hook is needed for CLI/TUI rewrites. If your Hermes build is missing it, the gateway path (Discord/Telegram/Slack/...) still works via `pre_gateway_dispatch` — only `hermes chat` and `hermes chat --tui` are affected.
+  - Upstream PR adding the hook: [NousResearch/hermes-agent#29526](https://github.com/NousResearch/hermes-agent/pull/29526). Once merged, every Hermes install will support all surfaces out of the box.
 - Python 3.11+
 - An LLM provider configured in Hermes for the optimiser model (the plugin uses Hermes's `ctx.llm` facade, so it inherits your active provider/auth — no separate keys needed by default).
 
