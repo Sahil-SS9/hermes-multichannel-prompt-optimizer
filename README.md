@@ -17,7 +17,7 @@ This pattern repeats across every conversation. Over a month, the savings are me
 ## What it does
 
 - **Intercepts** every user message before it reaches the agent — on CLI, TUI, and any gateway platform.
-- **Rewrites** for clarity, specificity, and token efficiency using a fast secondary model (defaults work, configurable).
+- **Tailors** the rewrite to the target model along two axes: **vendor family** (claude, openai, deepseek, google, nvidia, kimi, qwen, mistral) and **capability** (reasoning vs general). Same prompt headed to o3-mini gets front-loaded constraints; same prompt headed to Claude Sonnet gets XML-tagged structure.
 - **Scores** before/after across 5 dimensions: clarity, specificity, terminology, actionability, structure.
 - **Records** every rewrite into a local SQLite database for analytics and longitudinal coaching.
 - **Surfaces** insights via slash commands: comparisons, reusable suggestions, analytics by day/week/month.
@@ -127,9 +127,68 @@ plugins:
 
 This isolates the optimiser's LLM cost from your main session model — you can run Claude Opus for the agent while a £0.05/M token model handles rewrites.
 
-### Model profiles
+### Model profiles — how the rewrite gets tailored
 
-`model-profiles.yaml` ships with prompt templates tuned per target model family (Claude XML, OpenAI function-calling, reasoning models, long-context, etc.). Edit it to customise rewrite strategy per model. The defaults are reasonable for most users.
+Every model resolves along two orthogonal axes:
+
+1. **Family** — `claude`, `openai`, `deepseek`, `google`, `nvidia`, `kimi`, `qwen`, `mistral`, or `None` (unknown vendor).
+2. **Capability** — `reasoning` (o-series, r-series, *-thinking, nemotron-3-super, qwq, etc.) or `general` (everything else where a family was detected).
+
+Examples:
+
+| Model string | Resolves to |
+|---|---|
+| `claude-opus-4-7` | `(claude, general)` |
+| `openai/gpt-4o` | `(openai, general)` |
+| `openai/o3-mini` | `(openai, reasoning)` |
+| `deepseek/deepseek-r1` | `(deepseek, reasoning)` |
+| `gemini-2.0-flash-thinking` | `(google, reasoning)` |
+| `nvidia/nemotron-3-super-120b-a12b` | `(nvidia, reasoning)` |
+| `unknown-vendor/foo` | `(None, None)` — base template, no injection |
+| `random-thinking-model` | `(None, reasoning)` — capability still applies |
+
+The rewriter system prompt is built by **composing** whichever axes resolved. `gpt-4o` gets the openai-family tactics. `o3-mini` gets the openai-family tactics PLUS the reasoning capability tactics. Unknown models fall through to the base template — no fake guidance injected.
+
+### Editing `model-profiles.yaml`
+
+The shipped YAML has full coverage for the 8 families above plus the two capability profiles. You can edit it in place at `~/.hermes/plugins/prompt-optimizer/model-profiles.yaml`:
+
+```yaml
+families:
+  claude:
+    prompt_tactics:
+      - "Use XML tags (<thinking>, <answer>, <example>) to mark structure"
+      - "State constraints and boundaries explicitly"
+      # … add or override any rule …
+    token_efficiency_rules:
+      - "Replace 'Could you please' with imperative verbs"
+
+capabilities:
+  reasoning:
+    prompt_tactics:
+      - "Front-load ALL constraints — no incremental hints"
+      # …
+
+family_aliases:
+  claude: ["claude-", "anthropic/"]
+  # …
+
+reasoning_indicators:
+  - "o1"
+  - "o3"
+  - "thinking"
+  # …
+```
+
+The tactics are sourced from each vendor's published prompt-engineering guidance:
+
+- Claude — https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering
+- OpenAI (general) — https://platform.openai.com/docs/guides/prompt-engineering
+- OpenAI (reasoning) — https://platform.openai.com/docs/guides/reasoning
+- DeepSeek — https://api-docs.deepseek.com/guides/reasoning_model
+- Gemini — https://ai.google.dev/gemini-api/docs/prompting-intro
+
+If your local YAML is missing or malformed, the plugin falls back to baked-in defaults so nothing breaks.
 
 ---
 
@@ -179,8 +238,10 @@ PRs welcome. Please include tests for any new hook semantics or scoring changes.
 
 ## Roadmap
 
-- [ ] Wire `model_used` field for CLI rewrites (currently hardcoded blank — minor analytics gap).
-- [ ] Per-user model-profile overrides (currently global).
+- [x] Family + capability composition for model-tailored rewrites.
+- [x] Fix CLI `model=""` plumbing so the target model reaches the optimiser.
+- [ ] LLM-judged second-pass scoring (ask the target model to rate the rewrite). Adds latency; pending data on whether composition alone is enough.
+- [ ] Per-user model-profile overrides scoped per session.
 - [ ] Optional GitHub Actions example for cron-driven weekly digests posted to Discord/Slack.
 
 ---

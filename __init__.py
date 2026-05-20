@@ -270,7 +270,10 @@ def _on_pre_user_message(message="", session_id="", platform="cli", **kw):
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
         return None
 
-    model = ""
+    # Target model comes via the pre_user_message hook kwargs from
+    # conversation_loop.py. Used by resolve_model_profile() to tailor the
+    # rewrite. Provider isn't passed by this hook today; leave blank.
+    model = kw.get("model", "") or ""
     provider = ""
 
     if mode == "interactive":

@@ -50,6 +50,9 @@ BYPASS_PREFIXES = ("/quick", "*simple", "#basic")
 
 _PENDING_TIMEOUT_S = 120
 
+# Path to the model-profiles YAML; user-editable in place
+_MODEL_PROFILES_PATH = PLUGIN_DIR / "model-profiles.yaml"
+
 _LONDON = ZoneInfo("Europe/London") if ZoneInfo else None
 _REPORT_DIR = PLUGIN_DIR / "reports"
 
@@ -208,6 +211,342 @@ def select_template(name: str = "") -> PromptTemplate:
         if t.name == name:
             return t
     return _TEMPLATES[0]
+
+
+# ---------------------------------------------------------------------------
+# Model profile loading + resolution (family + capability composition)
+# ---------------------------------------------------------------------------
+#
+# Each model resolves along two axes:
+#   1. family     — vendor / model family (claude, openai, deepseek, …)
+#   2. capability — reasoning vs general
+#
+# The rewriter system prompt is composed by concatenating whichever axes
+# resolved. If both come back None the base template runs untouched.
+#
+# The shape lives in ``model-profiles.yaml`` next to this file. If the
+# YAML is missing or malformed the baked-in defaults below are used so
+# the plugin still works without the data file. User edits to the YAML
+# take precedence at load time.
+
+_BAKED_PROFILES: Dict[str, Any] = {
+    "families": {
+        "claude": {
+            "description": "Anthropic Claude — XML-friendly, long context",
+            "prompt_tactics": [
+                "Use XML tags (<thinking>, <answer>, <example>) to mark structure",
+                "State constraints and boundaries explicitly",
+                "Open with an imperative verb — no hedging or pleasantries",
+                "Put examples in <example> blocks rather than inline prose",
+            ],
+            "token_efficiency_rules": [
+                "Replace 'Could you please' with imperative verbs",
+                "Remove filler adverbs (very, really, quite, just)",
+                "Use bullet lists instead of prose enumerations",
+            ],
+        },
+        "openai": {
+            "description": "OpenAI GPT — tool use, function calling, generalist",
+            "prompt_tactics": [
+                "State the output format explicitly (JSON, markdown, plain)",
+                "Put static instructions in the system role, dynamic input in user",
+                "Use numbered steps for multi-part tasks",
+                "Reference functions/tools by name when expecting calls",
+            ],
+            "token_efficiency_rules": [
+                "Move repeated instructions to the system prompt",
+                "Compress examples to minimal viable form",
+                "Avoid restating role / persona mid-prompt",
+            ],
+        },
+        "deepseek": {
+            "description": "DeepSeek — coding-strong, cost-efficient",
+            "prompt_tactics": [
+                "Get to the task in the first sentence — no preamble",
+                "Break complex requests into numbered sub-tasks",
+                "Use markdown code blocks for any code-shaped input or output",
+            ],
+            "token_efficiency_rules": [
+                "Use short variable names in code examples",
+                "Strip redundant explanations after code blocks",
+                "Skip the closing summary",
+            ],
+        },
+        "google": {
+            "description": "Google Gemini / Gemma — long context, multimodal",
+            "prompt_tactics": [
+                "Use clear section headers (## Context, ## Task, ## Output)",
+                "Leverage long context — full documents beat excerpts",
+                "State citation requirements upfront when grounding matters",
+                "Prefer structured data (tables, JSON) over prose",
+            ],
+            "token_efficiency_rules": [
+                "Group related instructions under one header",
+                "Reference earlier sections by header name, don't repeat",
+                "Use tables for parallel comparisons",
+            ],
+        },
+        "nvidia": {
+            "description": "Nvidia Nemotron — instruction-tuned, reasoning variants",
+            "prompt_tactics": [
+                "Open with an imperative verb stating the deliverable",
+                "List constraints as a bulleted checklist",
+                "Specify output structure (sections, headings) explicitly",
+            ],
+            "token_efficiency_rules": [
+                "Drop politeness phrasing",
+                "Use concise constraint language ('must', 'never', 'only')",
+            ],
+        },
+        "kimi": {
+            "description": "Moonshot Kimi — long context",
+            "prompt_tactics": [
+                "State the goal in one sentence at the top",
+                "Provide full reference material rather than summaries",
+                "Specify output length and format explicitly",
+            ],
+            "token_efficiency_rules": [
+                "Skip self-introductions",
+                "Use direct commands",
+            ],
+        },
+        "qwen": {
+            "description": "Alibaba Qwen — multilingual, instruction-following",
+            "prompt_tactics": [
+                "Lead with the action verb",
+                "State output language explicitly if non-English",
+                "Use markdown for structured output",
+            ],
+            "token_efficiency_rules": [
+                "Strip filler and hedge words",
+                "Use bullet points over prose",
+            ],
+        },
+        "mistral": {
+            "description": "Mistral — fast, instruction-tuned",
+            "prompt_tactics": [
+                "Be concise — Mistral handles short prompts best",
+                "State output format explicitly",
+                "Use the system role for persistent context",
+            ],
+            "token_efficiency_rules": [
+                "Drop pleasantries",
+                "Move static context to system prompt",
+            ],
+        },
+    },
+    "capabilities": {
+        "reasoning": {
+            "description": "Reasoning-native model (o-series, r-series, thinking variants)",
+            "prompt_tactics": [
+                "Front-load ALL constraints and examples — no incremental hints",
+                "State the goal once, clearly, without back-references",
+                "Skip 'think step by step' — these models reason by default",
+                "Provide explicit verification criteria for correctness",
+            ],
+            "token_efficiency_rules": [
+                "Avoid restating context the model has just seen",
+                "Drop chain-of-thought scaffolding (the model adds its own)",
+                "Keep prompts dense — these models tolerate complexity well",
+            ],
+        },
+        "general": {
+            "description": "Standard chat model",
+            "prompt_tactics": [],
+            "token_efficiency_rules": [],
+        },
+    },
+    "family_aliases": {
+        "claude":   ["claude-", "anthropic/"],
+        "openai":   ["gpt-", "openai/", "o1", "o3", "o4"],
+        "deepseek": ["deepseek-", "deepseek/"],
+        "google":   ["gemini-", "gemma-", "google/"],
+        "nvidia":   ["nvidia/", "nemotron-"],
+        "kimi":     ["kimi-"],
+        "qwen":     ["qwen"],
+        "mistral":  ["mistral-"],
+    },
+    "reasoning_indicators": [
+        "o1",
+        "o3",
+        "o4",
+        "-r1",
+        "deepseek-r",
+        "thinking",
+        "reasoning",
+        "nemotron-3-super",
+        "qwq",
+    ],
+}
+
+
+_profiles_cache: Optional[Dict[str, Any]] = None
+
+
+def _load_model_profiles() -> Dict[str, Any]:
+    """Return the model-profile registry — cached.
+
+    Reads ``model-profiles.yaml`` next to this module on first call.
+    Missing file or malformed YAML falls through to ``_BAKED_PROFILES``
+    so the plugin always has a working registry.
+    """
+    global _profiles_cache
+    if _profiles_cache is not None:
+        return _profiles_cache
+
+    if not _MODEL_PROFILES_PATH.exists():
+        _profiles_cache = _BAKED_PROFILES
+        return _profiles_cache
+
+    try:
+        import yaml
+        with open(_MODEL_PROFILES_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        if not isinstance(data, dict) or "families" not in data:
+            logger.warning(
+                "prompt-optimizer: model-profiles.yaml missing 'families' "
+                "block; using baked-in defaults"
+            )
+            _profiles_cache = _BAKED_PROFILES
+            return _profiles_cache
+        _profiles_cache = data
+        return _profiles_cache
+    except Exception as exc:
+        logger.warning(
+            "prompt-optimizer: failed to load model-profiles.yaml (%s); "
+            "using baked-in defaults", exc,
+        )
+        _profiles_cache = _BAKED_PROFILES
+        return _profiles_cache
+
+
+def _reset_profiles_cache() -> None:
+    """Test helper — drop the cached profiles so a reload happens."""
+    global _profiles_cache
+    _profiles_cache = None
+
+
+def resolve_model_profile(model: str) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve a model string to (family, capability).
+
+    Family lookup uses substring matching against ``family_aliases`` from
+    the profile registry (case-insensitive). Capability is "reasoning"
+    if any ``reasoning_indicators`` substring is present, otherwise
+    "general" when a family was detected, or None when family is also
+    None.
+
+    Both axes can be None independently:
+      * `(claude, general)`  — Claude Sonnet, Opus, etc.
+      * `(openai, reasoning)` — o3-mini, gpt-5.5 (thinking variants)
+      * `(None, reasoning)`  — unknown vendor but obvious thinking model
+      * `(None, None)`       — entirely unknown → base template
+    """
+    if not isinstance(model, str) or not model:
+        return (None, None)
+    needle = model.lower()
+    profiles = _load_model_profiles()
+
+    family: Optional[str] = None
+    for fname, aliases in (profiles.get("family_aliases") or {}).items():
+        if any(a.lower() in needle for a in (aliases or [])):
+            family = fname
+            break
+
+    is_reasoning = any(
+        ind.lower() in needle
+        for ind in (profiles.get("reasoning_indicators") or [])
+    )
+    if is_reasoning:
+        capability: Optional[str] = "reasoning"
+    elif family is not None:
+        capability = "general"
+    else:
+        capability = None
+
+    return (family, capability)
+
+
+def _render_profile_guidance(
+    model: str,
+    family: Optional[str],
+    capability: Optional[str],
+) -> str:
+    """Build the MODEL-SPECIFIC GUIDANCE block for the rewriter prompt.
+
+    Returns the empty string when neither axis resolved (the caller
+    splices nothing and the base template is used as-is).
+    """
+    if family is None and capability is None:
+        return ""
+
+    profiles = _load_model_profiles()
+    families = profiles.get("families") or {}
+    capabilities = profiles.get("capabilities") or {}
+
+    family_block = families.get(family) if family else None
+    capability_block = capabilities.get(capability) if capability else None
+
+    family_tactics = (family_block or {}).get("prompt_tactics") or []
+    family_rules = (family_block or {}).get("token_efficiency_rules") or []
+    cap_tactics = (capability_block or {}).get("prompt_tactics") or []
+    cap_rules = (capability_block or {}).get("token_efficiency_rules") or []
+
+    lines: List[str] = [
+        "MODEL-SPECIFIC GUIDANCE (target: {})".format(model or "unknown"),
+        "Family: {}  |  Capability: {}".format(
+            family or "unknown", capability or "unknown",
+        ),
+    ]
+
+    if family_tactics:
+        lines.append("")
+        lines.append("Family tactics ({}):".format(family))
+        for t in family_tactics:
+            lines.append("  - {}".format(t))
+
+    if cap_tactics:
+        lines.append("")
+        lines.append("Capability tactics ({}):".format(capability))
+        for t in cap_tactics:
+            lines.append("  - {}".format(t))
+
+    if family_rules or cap_rules:
+        lines.append("")
+        lines.append("Token efficiency:")
+        for r in family_rules + cap_rules:
+            lines.append("  - {}".format(r))
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _inject_guidance_into_template(
+    template: PromptTemplate, guidance: str,
+) -> PromptTemplate:
+    """Return a new PromptTemplate with guidance spliced before OUTPUT FORMAT.
+
+    The system prompt of each built-in template contains a
+    ``"OUTPUT FORMAT:"`` marker. We insert the guidance block immediately
+    before that line so the LLM sees RULES → MODEL GUIDANCE → OUTPUT FORMAT.
+    If the marker is absent (e.g. a future custom template) we prepend
+    the guidance at the start of the system prompt as a safe fallback.
+    """
+    if not guidance:
+        return template
+
+    marker = "OUTPUT FORMAT:"
+    sp = template.system_prompt
+    idx = sp.find(marker)
+    if idx == -1:
+        new_sp = guidance + "\n\n" + sp
+    else:
+        new_sp = sp[:idx] + guidance + "\n" + sp[idx:]
+
+    return PromptTemplate(
+        name=template.name,
+        description=template.description,
+        system_prompt=new_sp,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -596,11 +935,21 @@ def _try_rewrite_sync(text: str, pllm: Any,
 
 def _run_optimizer(original, model, provider, pllm: Any,
                    template: Optional[PromptTemplate] = None) -> Optional[RewriteRecord]:
-    """Run the optimizer: heuristic score before, LLM rewrite + score after."""
+    """Run the optimizer: heuristic score before, LLM rewrite + score after.
+
+    Composes a MODEL-SPECIFIC GUIDANCE block into the rewriter system
+    prompt based on the target model's (family, capability) profile.
+    Unknown models fall through to the base template.
+    """
     quality_before, tokens_before = _score_prompt_heuristic(original)
     logger.info("prompt-optimizer: trying rewrite for: %r", original[:80])
 
-    result = _try_rewrite_sync(original, pllm, template=template)
+    family, capability = resolve_model_profile(model)
+    base_template = template or select_template()
+    guidance = _render_profile_guidance(model, family, capability)
+    effective_template = _inject_guidance_into_template(base_template, guidance)
+
+    result = _try_rewrite_sync(original, pllm, template=effective_template)
     if not result:
         logger.info("prompt-optimizer: no rewrite produced")
         return None
@@ -616,11 +965,19 @@ def _run_optimizer(original, model, provider, pllm: Any,
     token_delta_pct = round(
         ((tokens_before - tokens_after) / max(1, tokens_before)) * 100, 1)
 
+    # Composite profile key: "claude/general", "openai/reasoning", or
+    # "unknown" when neither axis resolved. Lets analytics group rewrites
+    # by family+capability while the raw model string lives in `model_used`.
+    if family is None and capability is None:
+        profile_key = "unknown"
+    else:
+        profile_key = "{}/{}".format(family or "unknown", capability or "unknown")
+
     return RewriteRecord(
         original=original, rewritten=rewritten_text,
         quality_before=quality_before, quality_after=quality_after,
         token_delta_pct=token_delta_pct,
-        model_profile=model or "unknown",
+        model_profile=profile_key,
     )
 
 

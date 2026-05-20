@@ -1,70 +1,148 @@
-# Model Profiles for Prompt Optimizer
-# Override or extend defaults by editing this file.
-# Keys must match: claude | deepseek | openai | gemini | reasoning
-# The plugin merges user values over built-in defaults.
+# Model Profiles for Prompt Optimizer — family + capability composition
+#
+# Each model resolves along TWO orthogonal axes:
+#   1. family     — vendor / model family (claude, openai, deepseek, …)
+#   2. capability — reasoning vs general
+#
+# The rewriter system prompt is composed by concatenating whichever axes
+# resolved. If both come back None (unknown vendor + no reasoning hints)
+# the base template runs untouched.
+#
+# Sources for each family's tactics:
+#   claude   — https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering
+#   openai   — https://platform.openai.com/docs/guides/prompt-engineering
+#   deepseek — https://api-docs.deepseek.com/guides/reasoning_model
+#   google   — https://ai.google.dev/gemini-api/docs/prompting-intro
+#   reasoning— https://platform.openai.com/docs/guides/reasoning
 
-claude:
-  description: "Anthropic Claude — prefers structured XML tags, detailed context, step-by-step reasoning"
-  strengths: ["long context", "nuanced reasoning", "constitutional AI"]
-  weaknesses: ["verbose", "over-cautious refusals"]
-  prompt_tactics:
-    - "Use XML tags (<thinking>, <answer>) for structure"
-    - "Be explicit about constraints and boundaries"
-    - "Provide examples in <example> blocks"
-    - "Avoid unnecessary hedging — direct instructions work best"
-  token_efficiency_rules:
-    - "Replace 'Could you please' with imperative verbs"
-    - "Remove filler adverbs (very, really, quite)"
-    - "Use bullet lists instead of prose enumerations"
+families:
+  claude:
+    description: "Anthropic Claude — XML-friendly, long context, nuanced reasoning"
+    prompt_tactics:
+      - "Use XML tags (<thinking>, <answer>, <example>) to mark structure"
+      - "State constraints and boundaries explicitly"
+      - "Open with an imperative verb — no hedging or pleasantries"
+      - "Put examples in <example> blocks rather than inline prose"
+    token_efficiency_rules:
+      - "Replace 'Could you please' with imperative verbs"
+      - "Remove filler adverbs (very, really, quite, just)"
+      - "Use bullet lists instead of prose enumerations"
 
-deepseek:
-  description: "DeepSeek — reasoning-native, chain-of-thought friendly, cost-efficient"
-  strengths: ["reasoning", "math/coding", "cheap"]
-  weaknesses: ["over-thinks simple queries", "long reasoning chains"]
-  prompt_tactics:
-    - "Encourage explicit reasoning with 'Think step by step'"
-    - "Break complex tasks into numbered sub-tasks"
-    - "Use markdown code blocks for structured output"
-  token_efficiency_rules:
-    - "Minimize preamble — get to the task in first sentence"
-    - "Use concise variable names in code examples"
-    - "Eliminate redundant explanations after code blocks"
+  openai:
+    description: "OpenAI GPT — strong tool use, function calling, general-purpose"
+    prompt_tactics:
+      - "State the output format explicitly (JSON, markdown, plain)"
+      - "Put static instructions in the system role, dynamic input in user"
+      - "Use numbered steps for multi-part tasks"
+      - "Reference functions/tools by name when expecting calls"
+    token_efficiency_rules:
+      - "Move repeated instructions to the system prompt"
+      - "Compress examples to minimal viable form"
+      - "Avoid restating role / persona mid-prompt"
 
-openai:
-  description: "OpenAI GPT-4o / o3 — generalist, tool-calling strong, vision-capable"
-  strengths: ["tool use", "vision", "general knowledge"]
-  weaknesses: ["can be verbose", "expensive at scale"]
-  prompt_tactics:
-    - "Use function-calling schema when available"
-    - "Provide system context in system message, not user prompt"
-    - "Be specific about output format (JSON, markdown, etc.)"
-  token_efficiency_rules:
-    - "Move static instructions to system prompt"
-    - "Use numbered steps for multi-part tasks"
-    - "Compress examples to minimal viable form"
+  deepseek:
+    description: "DeepSeek — coding-strong, cost-efficient, chain-of-thought capable"
+    prompt_tactics:
+      - "Get to the task in the first sentence — no preamble"
+      - "Break complex requests into numbered sub-tasks"
+      - "Use markdown code blocks for any code-shaped input or output"
+    token_efficiency_rules:
+      - "Use short variable names in code examples"
+      - "Strip redundant explanations after code blocks"
+      - "Skip the closing summary — let the code speak"
 
-gemini:
-  description: "Google Gemini — long context king, multimodal, factual"
-  strengths: ["1M+ context", "multimodal", "Google ecosystem"]
-  weaknesses: ["inconsistent formatting", "over-confident hallucinations"]
-  prompt_tactics:
-    - "Leverage long context — include full documents"
-    - "Use clear section headers for long prompts"
-    - "Specify citation requirements explicitly"
-  token_efficiency_rules:
-    - "Use structured data (tables, JSON) over prose"
-    - "Group related instructions under clear headers"
-    - "Avoid repeated phrases — reference prior sections"
+  google:
+    description: "Google Gemini / Gemma — long context, multimodal, factual"
+    prompt_tactics:
+      - "Use clear section headers (## Context, ## Task, ## Output)"
+      - "Leverage long context — full documents beat excerpts"
+      - "State citation requirements upfront when grounding matters"
+      - "Prefer structured data (tables, JSON) over prose"
+    token_efficiency_rules:
+      - "Group related instructions under one header"
+      - "Reference earlier sections by header name, don't repeat"
+      - "Use tables for parallel comparisons"
 
-reasoning:
-  description: "Generic reasoning model — o1, R1, etc. — optimise for thought chains"
-  strengths: ["deep reasoning", "math", "planning"]
-  weaknesses: ["slow", "opaque thought process"]
-  prompt_tactics:
-    - "Ask the model to 'reason extensively' for hard problems"
-    - "Provide all constraints upfront — no incremental hints"
-    - "Request intermediate checks to catch reasoning errors"
-  token_efficiency_rules:
-    - "Front-load all constraints and examples"
-    - "Avoid back-reference to earlier prompt sections"
-    - "Use explicit scoring rubrics for eval tasks"
+  nvidia:
+    description: "Nvidia Nemotron family — instruction-tuned, reasoning variants strong"
+    prompt_tactics:
+      - "Open with an imperative verb stating the deliverable"
+      - "List constraints as a bulleted checklist"
+      - "Specify output structure (sections, headings) explicitly"
+    token_efficiency_rules:
+      - "Drop politeness phrasing"
+      - "Use concise constraint language ('must', 'never', 'only')"
+
+  kimi:
+    description: "Moonshot Kimi — long context, content-heavy tasks"
+    prompt_tactics:
+      - "State the goal in one sentence at the top"
+      - "Provide full reference material rather than summaries"
+      - "Specify output length and format explicitly"
+    token_efficiency_rules:
+      - "Skip self-introductions"
+      - "Use direct commands"
+
+  qwen:
+    description: "Alibaba Qwen — multilingual, instruction-following, agent-capable"
+    prompt_tactics:
+      - "Lead with the action verb"
+      - "State output language explicitly if non-English"
+      - "Use markdown for structured output"
+    token_efficiency_rules:
+      - "Strip filler and hedge words"
+      - "Use bullet points over prose"
+
+  mistral:
+    description: "Mistral — fast, instruction-tuned, function-calling capable"
+    prompt_tactics:
+      - "Be concise — Mistral handles short prompts best"
+      - "State output format explicitly"
+      - "Use the system role for persistent context"
+    token_efficiency_rules:
+      - "Drop pleasantries"
+      - "Move static context to system prompt"
+
+capabilities:
+  reasoning:
+    description: "Reasoning-native model (o-series, r-series, thinking variants)"
+    prompt_tactics:
+      - "Front-load ALL constraints and examples — no incremental hints"
+      - "State the goal once, clearly, without back-references"
+      - "Skip 'think step by step' — these models reason by default"
+      - "Provide explicit verification criteria for correctness"
+    token_efficiency_rules:
+      - "Avoid restating context the model has just seen"
+      - "Drop chain-of-thought scaffolding (the model adds its own)"
+      - "Keep prompts dense — these models tolerate complexity well"
+
+  general:
+    description: "Standard chat model — clarity and structure beat brevity"
+    prompt_tactics: []
+    token_efficiency_rules: []
+
+# Family resolution: substring/prefix match on the model string (case-insensitive).
+# First match wins; ordered most-specific to least-specific within each list.
+family_aliases:
+  claude:   ["claude-", "anthropic/"]
+  openai:   ["gpt-", "openai/", "o1", "o3", "o4"]
+  deepseek: ["deepseek-", "deepseek/"]
+  google:   ["gemini-", "gemma-", "google/"]
+  nvidia:   ["nvidia/", "nemotron-"]
+  kimi:     ["kimi-"]
+  qwen:     ["qwen"]
+  mistral:  ["mistral-"]
+
+# Capability resolution: a model is "reasoning" if ANY of these substrings
+# appears in its model string (case-insensitive). Otherwise it's "general"
+# when a family was detected, or None when family is also None.
+reasoning_indicators:
+  - "o1"
+  - "o3"
+  - "o4"
+  - "-r1"
+  - "deepseek-r"
+  - "thinking"
+  - "reasoning"
+  - "nemotron-3-super"
+  - "qwq"
