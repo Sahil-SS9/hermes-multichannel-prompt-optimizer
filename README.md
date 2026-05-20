@@ -131,8 +131,8 @@ This isolates the optimiser's LLM cost from your main session model — you can 
 
 Every model resolves along two orthogonal axes:
 
-1. **Family** — `claude`, `openai`, `deepseek`, `google`, `nvidia`, `kimi`, `qwen`, `mistral`, or `None` (unknown vendor).
-2. **Capability** — `reasoning` (o-series, r-series, *-thinking, nemotron-3-super, qwq, etc.) or `general` (everything else where a family was detected).
+1. **Family** — one of `claude`, `openai`, `deepseek`, `google`, `nvidia`, `kimi`, `qwen`, `mistral`, `llama`, `nousresearch`, `xai`, `amazon`, `cohere`, `microsoft`, `perplexity`, `zhipu`, `liquid`, `minimax`, `ibm`, `inflection`, `xiaomi`, or `None` (unknown vendor). Coverage spans ~21 vendor families derived from the OpenRouter catalogue.
+2. **Capability** — `reasoning` (o-series, r-series, `*-thinking`, magistral, glm-z, deepresearch, nemotron-3-super, qwq, allenai olmo-think, etc.) or `general` (everything else where a family was detected).
 
 Examples:
 
@@ -144,8 +144,16 @@ Examples:
 | `deepseek/deepseek-r1` | `(deepseek, reasoning)` |
 | `gemini-2.0-flash-thinking` | `(google, reasoning)` |
 | `nvidia/nemotron-3-super-120b-a12b` | `(nvidia, reasoning)` |
+| `mistralai/magistral-medium-2509` | `(mistral, reasoning)` |
+| `meta-llama/llama-4-scout` | `(llama, general)` |
+| `nousresearch/hermes-4-70b` | `(nousresearch, general)` |
+| `x-ai/grok-4` | `(xai, general)` |
+| `cohere/command-a` | `(cohere, general)` |
+| `perplexity/sonar-pro-search` | `(perplexity, general)` |
+| `z-ai/glm-z1-reasoning` | `(zhipu, reasoning)` |
+| `minimax/minimax-m2.7` | `(minimax, general)` |
+| `allenai/olmo-3-32b-think` | `(None, reasoning)` — capability without known family |
 | `unknown-vendor/foo` | `(None, None)` — base template, no injection |
-| `random-thinking-model` | `(None, reasoning)` — capability still applies |
 
 The rewriter system prompt is built by **composing** whichever axes resolved. `gpt-4o` gets the openai-family tactics. `o3-mini` gets the openai-family tactics PLUS the reasoning capability tactics. Unknown models fall through to the base template — no fake guidance injected.
 

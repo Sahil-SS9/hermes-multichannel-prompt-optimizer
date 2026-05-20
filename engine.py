@@ -323,7 +323,7 @@ _BAKED_PROFILES: Dict[str, Any] = {
             ],
         },
         "mistral": {
-            "description": "Mistral — fast, instruction-tuned",
+            "description": "Mistral / Magistral — fast, instruction-tuned",
             "prompt_tactics": [
                 "Be concise — Mistral handles short prompts best",
                 "State output format explicitly",
@@ -334,10 +334,166 @@ _BAKED_PROFILES: Dict[str, Any] = {
                 "Move static context to system prompt",
             ],
         },
+        "llama": {
+            "description": "Meta Llama — open-weight generalist, instruction-tuned",
+            "prompt_tactics": [
+                "Use the system message for role + persistent constraints",
+                "Provide examples for any structured-output task",
+                "Number steps for multi-part workflows",
+            ],
+            "token_efficiency_rules": [
+                "Remove conversational fillers",
+                "Use direct commands; Llama responds well to imperatives",
+            ],
+        },
+        "nousresearch": {
+            "description": "NousResearch Hermes — agentic, tool-use focused",
+            "prompt_tactics": [
+                "State the task imperatively in the first line",
+                "Define tool contracts explicitly when expecting calls",
+                "Use JSON schemas for structured output",
+                "Be explicit about reasoning vs action steps",
+            ],
+            "token_efficiency_rules": [
+                "Skip pleasantries",
+                "Use minimal prose around code/JSON blocks",
+            ],
+        },
+        "xai": {
+            "description": "xAI Grok — generalist, conversational, reasoning variants",
+            "prompt_tactics": [
+                "Be direct — Grok handles informal language well",
+                "State the format requirement once, clearly",
+                "Use markdown structure for technical content",
+            ],
+            "token_efficiency_rules": [
+                "Drop unnecessary politeness",
+                "Avoid restating context the model has just seen",
+            ],
+        },
+        "amazon": {
+            "description": "Amazon Nova — generalist, multimodal",
+            "prompt_tactics": [
+                "Structure prompts as: Context → Task → Output spec",
+                "Be explicit about output format (JSON, markdown, plain text)",
+                "Provide examples for any non-trivial schema",
+            ],
+            "token_efficiency_rules": [
+                "Separate static instructions into system role",
+                "Compress example data to minimal viable form",
+            ],
+        },
+        "cohere": {
+            "description": "Cohere Command — RAG-optimised, citation-aware",
+            "prompt_tactics": [
+                "Provide reference documents explicitly — Command excels at grounded answers",
+                "Request citations when grounding matters",
+                "Use clear section markers for documents vs instructions",
+            ],
+            "token_efficiency_rules": [
+                "Reference documents by ID rather than re-quoting",
+                "Strip explanatory padding around the core question",
+            ],
+        },
+        "microsoft": {
+            "description": "Microsoft Phi — small instruction-tuned models",
+            "prompt_tactics": [
+                "Keep prompts concise — Phi has limited context tolerance",
+                "Use simple structure (one task per prompt)",
+                "State output format explicitly",
+            ],
+            "token_efficiency_rules": [
+                "Avoid long preambles",
+                "One example is enough — don't pile on shots",
+            ],
+        },
+        "perplexity": {
+            "description": "Perplexity Sonar — search-augmented, citation-native",
+            "prompt_tactics": [
+                "Scope the query narrowly — Sonar searches what you ask for",
+                "State freshness / recency requirements explicitly",
+                "Ask for sources / citations when factuality matters",
+            ],
+            "token_efficiency_rules": [
+                "Skip 'please search for' — Sonar searches by default",
+                "Use specific terms over generic ones",
+            ],
+        },
+        "zhipu": {
+            "description": "Zhipu GLM / GLM-Z — bilingual, reasoning variants",
+            "prompt_tactics": [
+                "Be explicit about output language (English/Chinese)",
+                "Use structured input (sections, bullets) for complex tasks",
+                "State the deliverable in the opening sentence",
+            ],
+            "token_efficiency_rules": [
+                "Strip hedge language",
+                "Use direct constraint statements",
+            ],
+        },
+        "liquid": {
+            "description": "Liquid Foundation Models — efficient, edge-friendly",
+            "prompt_tactics": [
+                "Keep prompts focused — one task per call",
+                "State output format explicitly",
+                "Provide minimal but precise context",
+            ],
+            "token_efficiency_rules": [
+                "Avoid padding and pleasantries",
+                "Use lists over prose",
+            ],
+        },
+        "minimax": {
+            "description": "MiniMax M-series — long context, reasoning-capable",
+            "prompt_tactics": [
+                "State the deliverable in one sentence at the top",
+                "Structure input with clear section headers",
+                "Specify output length and format explicitly",
+            ],
+            "token_efficiency_rules": [
+                "Move reusable context to a separate section",
+                "Avoid restating constraints mid-prompt",
+            ],
+        },
+        "ibm": {
+            "description": "IBM Granite — enterprise instruction-tuned, code-aware",
+            "prompt_tactics": [
+                "Use structured prompts with clear sections",
+                "State output format and length requirements upfront",
+                "Provide schemas for any structured-output task",
+            ],
+            "token_efficiency_rules": [
+                "Drop conversational filler",
+                "Use precise technical terminology",
+            ],
+        },
+        "inflection": {
+            "description": "Inflection Pi — conversational, empathy-tuned",
+            "prompt_tactics": [
+                "Use a conversational tone — Pi responds best to natural dialogue",
+                "State the desired outcome clearly",
+            ],
+            "token_efficiency_rules": [
+                "Avoid robotic bullet-list-only prompts",
+                "Keep instructions natural and contextual",
+            ],
+        },
+        "xiaomi": {
+            "description": "Xiaomi MiMo — reasoning-focused, multilingual",
+            "prompt_tactics": [
+                "State constraints upfront — MiMo reasons over the full context",
+                "Use structured input for complex problems",
+                "Specify reasoning depth requirements",
+            ],
+            "token_efficiency_rules": [
+                "Avoid restating earlier context",
+                "Use bullet structure for multi-part problems",
+            ],
+        },
     },
     "capabilities": {
         "reasoning": {
-            "description": "Reasoning-native model (o-series, r-series, thinking variants)",
+            "description": "Reasoning-native model (o-series, r-series, thinking, magistral, etc.)",
             "prompt_tactics": [
                 "Front-load ALL constraints and examples — no incremental hints",
                 "State the goal once, clearly, without back-references",
@@ -357,14 +513,27 @@ _BAKED_PROFILES: Dict[str, Any] = {
         },
     },
     "family_aliases": {
-        "claude":   ["claude-", "anthropic/"],
-        "openai":   ["gpt-", "openai/", "o1", "o3", "o4"],
-        "deepseek": ["deepseek-", "deepseek/"],
-        "google":   ["gemini-", "gemma-", "google/"],
-        "nvidia":   ["nvidia/", "nemotron-"],
-        "kimi":     ["kimi-"],
-        "qwen":     ["qwen"],
-        "mistral":  ["mistral-"],
+        "claude":       ["claude-", "anthropic/"],
+        "openai":       ["gpt-", "openai/", "o1", "o3", "o4"],
+        "deepseek":     ["deepseek-", "deepseek/"],
+        "google":       ["gemini-", "gemma-", "google/"],
+        "nvidia":       ["nvidia/", "nemotron-"],
+        "kimi":         ["kimi-", "moonshotai/"],
+        "qwen":         ["qwen"],
+        "mistral":      ["mistral-", "mistralai/", "magistral"],
+        "llama":        ["llama-", "meta-llama/"],
+        "nousresearch": ["nousresearch/", "hermes-4", "hermes-3"],
+        "xai":          ["x-ai/", "grok-"],
+        "amazon":       ["amazon/", "nova-"],
+        "cohere":       ["cohere/", "command-"],
+        "microsoft":    ["microsoft/", "phi-"],
+        "perplexity":   ["perplexity/", "sonar-"],
+        "zhipu":        ["z-ai/", "glm-"],
+        "liquid":       ["liquid/", "lfm-"],
+        "minimax":      ["minimax/", "minimaxai/"],
+        "ibm":          ["ibm-granite/", "granite-"],
+        "inflection":   ["inflection/"],
+        "xiaomi":       ["xiaomi/", "mimo-"],
     },
     "reasoning_indicators": [
         "o1",
@@ -373,9 +542,13 @@ _BAKED_PROFILES: Dict[str, Any] = {
         "-r1",
         "deepseek-r",
         "thinking",
+        "-think",
         "reasoning",
         "nemotron-3-super",
         "qwq",
+        "magistral",
+        "glm-z",
+        "deepresearch",
     ],
 }
 
