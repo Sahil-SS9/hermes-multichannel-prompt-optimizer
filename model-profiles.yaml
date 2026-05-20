@@ -1,0 +1,70 @@
+# Model Profiles for Prompt Optimizer
+# Override or extend defaults by editing this file.
+# Keys must match: claude | deepseek | openai | gemini | reasoning
+# The plugin merges user values over built-in defaults.
+
+claude:
+  description: "Anthropic Claude — prefers structured XML tags, detailed context, step-by-step reasoning"
+  strengths: ["long context", "nuanced reasoning", "constitutional AI"]
+  weaknesses: ["verbose", "over-cautious refusals"]
+  prompt_tactics:
+    - "Use XML tags (<thinking>, <answer>) for structure"
+    - "Be explicit about constraints and boundaries"
+    - "Provide examples in <example> blocks"
+    - "Avoid unnecessary hedging — direct instructions work best"
+  token_efficiency_rules:
+    - "Replace 'Could you please' with imperative verbs"
+    - "Remove filler adverbs (very, really, quite)"
+    - "Use bullet lists instead of prose enumerations"
+
+deepseek:
+  description: "DeepSeek — reasoning-native, chain-of-thought friendly, cost-efficient"
+  strengths: ["reasoning", "math/coding", "cheap"]
+  weaknesses: ["over-thinks simple queries", "long reasoning chains"]
+  prompt_tactics:
+    - "Encourage explicit reasoning with 'Think step by step'"
+    - "Break complex tasks into numbered sub-tasks"
+    - "Use markdown code blocks for structured output"
+  token_efficiency_rules:
+    - "Minimize preamble — get to the task in first sentence"
+    - "Use concise variable names in code examples"
+    - "Eliminate redundant explanations after code blocks"
+
+openai:
+  description: "OpenAI GPT-4o / o3 — generalist, tool-calling strong, vision-capable"
+  strengths: ["tool use", "vision", "general knowledge"]
+  weaknesses: ["can be verbose", "expensive at scale"]
+  prompt_tactics:
+    - "Use function-calling schema when available"
+    - "Provide system context in system message, not user prompt"
+    - "Be specific about output format (JSON, markdown, etc.)"
+  token_efficiency_rules:
+    - "Move static instructions to system prompt"
+    - "Use numbered steps for multi-part tasks"
+    - "Compress examples to minimal viable form"
+
+gemini:
+  description: "Google Gemini — long context king, multimodal, factual"
+  strengths: ["1M+ context", "multimodal", "Google ecosystem"]
+  weaknesses: ["inconsistent formatting", "over-confident hallucinations"]
+  prompt_tactics:
+    - "Leverage long context — include full documents"
+    - "Use clear section headers for long prompts"
+    - "Specify citation requirements explicitly"
+  token_efficiency_rules:
+    - "Use structured data (tables, JSON) over prose"
+    - "Group related instructions under clear headers"
+    - "Avoid repeated phrases — reference prior sections"
+
+reasoning:
+  description: "Generic reasoning model — o1, R1, etc. — optimise for thought chains"
+  strengths: ["deep reasoning", "math", "planning"]
+  weaknesses: ["slow", "opaque thought process"]
+  prompt_tactics:
+    - "Ask the model to 'reason extensively' for hard problems"
+    - "Provide all constraints upfront — no incremental hints"
+    - "Request intermediate checks to catch reasoning errors"
+  token_efficiency_rules:
+    - "Front-load all constraints and examples"
+    - "Avoid back-reference to earlier prompt sections"
+    - "Use explicit scoring rubrics for eval tasks"
