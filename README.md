@@ -1,79 +1,196 @@
-# prompt-optimizer
+# hermes-multichannel-prompt-optimizer
 
-Model-aware prompt rewriter with token-efficiency scoring, coaching metrics, and slash commands.
+A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that rewrites your prompts before they reach the LLM. Works across every surface Hermes runs on: CLI, TUI, Discord, Telegram, and any other gateway adapter.
+
+Same agent, sharper prompts, lower token bills, better answers — without you having to think about prompt craft.
+
+---
+
+## Why
+
+A senior PM types `"hey could you maybe explain to me very kindly what python generators are please when you get a chance"` — 18 words, mostly filler. The model burns context on politeness and noise. With this plugin, the agent sees `"Explain Python generators."` — clearer, cheaper, and the answer comes back sharper.
+
+This pattern repeats across every conversation. Over a month, the savings are meaningful: in dogfooding so far the optimiser averages **+55 quality points** and **20–80% token reduction** per rewrite. You also build up a private dataset of your own prompt patterns and improvements, viewable via `/prompt-insights`.
+
+---
 
 ## What it does
 
-- **Intercepts** every user message before the agent sees it (gateway + CLI/TUI)
-- **Rewrites** it for the target model's strengths (Claude XML, DeepSeek reasoning, OpenAI function calling, Gemini long-context, reasoning models)
-- **Scores** before/after prompt quality using LLM-based assessment with heuristic fallback
-- **Stores** metrics in SQLite for longitudinal coaching
-- **Badges** each response: `Optimized · +12% tokens · quality 45→72 · /prompt-stats`
-- **Bypass** with `/quick`, `*simple`, or `#basic` prefixes
+- **Intercepts** every user message before it reaches the agent — on CLI, TUI, and any gateway platform.
+- **Rewrites** for clarity, specificity, and token efficiency using a fast secondary model (defaults work, configurable).
+- **Scores** before/after across 5 dimensions: clarity, specificity, terminology, actionability, structure.
+- **Records** every rewrite into a local SQLite database for analytics and longitudinal coaching.
+- **Surfaces** insights via slash commands: comparisons, reusable suggestions, analytics by day/week/month.
+- **Renders** an arrow-key approval overlay on CLI (via `ctx.ask_user`) and a full before/after panel in the TUI.
+
+---
+
+## Surfaces
+
+| Surface | Auto mode | Interactive mode |
+|---|---|---|
+| `hermes chat` (CLI) | Silent rewrite | Arrow-key overlay (accept / reject) |
+| `hermes chat --tui` | Silent rewrite | Before/after panel with quality scores |
+| Discord | Silent rewrite | Diff sent as a message; reply `y` / `n` |
+| Telegram, Slack, IRC, etc. | Silent rewrite | Same as Discord |
+
+---
+
+## Requirements
+
+- **Hermes Agent** with the `pre_user_message` plugin hook. This hook is required for CLI/TUI rewrites to work. If your Hermes build is missing it, the gateway path (Discord/Telegram/…) still works via `pre_gateway_dispatch`.
+- Python 3.11+
+- An LLM provider configured in Hermes for the optimiser model (the plugin uses Hermes's `ctx.llm` facade, so it inherits your active provider/auth — no separate keys needed by default).
+
+---
+
+## Install
+
+```bash
+hermes plugins install Sahil-SS9/hermes-multichannel-prompt-optimizer
+```
+
+Then enable it in `~/.hermes/config.yaml`:
+
+```yaml
+plugins:
+  enabled:
+    - prompt-optimizer
+```
+
+Restart your Hermes session. Confirm it's loaded:
+
+```bash
+hermes plugins list | grep prompt-optimizer
+```
+
+You should see it as `enabled`. Then in `hermes chat`:
+
+```
+/prompt-optimizer status
+```
+
+If the status block prints, you're set.
+
+---
 
 ## Modes
 
 | Mode | Behaviour |
-|------|-----------|
-| `auto` (default) | Silent rewrite — agent sees optimized version, you see badge |
-| `interactive` | Show diff → approve (y) or reject (n) before rewrite |
-| `off` | Pass through untouched |
+|---|---|
+| `auto` *(default)* | Silent rewrite — agent sees the optimised version, you don't see the diff. |
+| `interactive` | Show the diff first, ask for approval before sending. |
+| `off` | Pass everything through untouched. |
 
-### Interactive mode details
+Toggle mid-session:
 
-- **Gateway (Telegram/Discord)**: Diff sent as a reply. Reply `y` to use optimized, `n` to use original. 
-- **CLI/TUI**: Diff printed to terminal. Type `y`/`n` at the prompt.
-- **Timeout**: Pending approval expires after 120s — auto-approved, new message gets a fresh diff.
-- **Rapid-fire**: If you send a new message before responding `y/n`, the pending rewrite is auto-approved and the new message is processed.
-- **Non-TTY**: Falls back to auto mode.
+```
+/prompt-optimizer auto
+/prompt-optimizer interactive
+/prompt-optimizer off
+```
 
-## Scoring
+---
 
-The optimizer LLM evaluates each prompt across 5 dimensions (0-100 each):
-- **clarity** — action verb early, clear intent
-- **specificity** — concrete nouns, file paths, numbers
-- **terminology** — domain-correct terms, no vague language
-- **actionability** — can the agent act on this without clarification?
-- **structure** — formatting appropriate for the target model
-
-Composite score is the average. Falls back to heuristic if LLM call fails or times out.
-
-## Commands
+## Slash commands
 
 | Command | Description |
-|---------|-------------|
-| `/prompt-optimizer auto` | Silent rewrite (default) |
-| `/prompt-optimizer interactive` | Show diff, ask approval |
-| `/prompt-optimizer off` | Pass through untouched |
-| `/prompt-optimizer status` | Current mode, stored rewrites, report commands |
-| `/prompt-insights` | Full CLI/TUI report: overview, insights, suggestions, comparisons, analytics |
-| `/prompt-insights --html` | Full report plus a local `file://` HTML report under `reports/` |
-| `/prompt-compare --limit 5` | Latest before/after prompt comparisons |
-| `/prompt-suggestions --limit 8` | Reusable replacement suggestions from recent rewrites |
-| `/prompt-analytics all` | Daily, weekly, and monthly analytics |
-| `/prompt-analytics daily` | Daily analytics only |
-| `/prompt-analytics weekly` | Weekly analytics only |
-| `/prompt-analytics monthly` | Monthly analytics only |
-| `/prompt-stats` | Legacy compact alias for `/prompt-insights` |
-| `/prompt-stats --raw` | JSON summary for today/week/month |
+|---|---|
+| `/prompt-optimizer [auto\|interactive\|off\|status]` | Set mode or print status. |
+| `/prompt-insights` | Full report: overview, insights, suggestions, comparisons, analytics. |
+| `/prompt-insights --html` | Same report plus a styled HTML file under `reports/`. |
+| `/prompt-compare --limit 5` | Latest before/after comparisons. |
+| `/prompt-suggestions --limit 8` | Reusable prompt-replacement patterns mined from your history. |
+| `/prompt-analytics [daily\|weekly\|monthly\|all]` | Period analytics. |
+| `/prompt-stats --raw` | JSON summary for today, week, month. Useful for cron / dashboards. |
 
-## Files
+---
 
-- `__init__.py` — plugin logic (hooks, slash commands, metrics DB)
-- `model-profiles.yaml` — per-model optimization strategies (user-editable)
-- `metrics.db` — SQLite store (auto-created, 90-day rolling prune)
+## Configuration
+
+The plugin needs no `config.yaml` entries to run with sensible defaults. To pin the optimiser to a specific cheap-and-fast model, override under `plugins.entries`:
+
+```yaml
+plugins:
+  enabled:
+    - prompt-optimizer
+  entries:
+    prompt-optimizer:
+      llm:
+        allow_model_override: true
+        allowed_models:
+          - deepseek-v4-flash
+        allow_provider_override: true
+        allowed_providers:
+          - nous
+```
+
+This isolates the optimiser's LLM cost from your main session model — you can run Claude Opus for the agent while a £0.05/M token model handles rewrites.
+
+### Model profiles
+
+`model-profiles.yaml` ships with prompt templates tuned per target model family (Claude XML, OpenAI function-calling, reasoning models, long-context, etc.). Edit it to customise rewrite strategy per model. The defaults are reasonable for most users.
+
+---
+
+## Privacy
+
+- All metrics live in a **local SQLite database** at `~/.hermes/plugins/prompt-optimizer/metrics.db`. Nothing is uploaded.
+- The optimiser does call your configured LLM provider for the rewrite step — that's a third-party API call subject to your provider's privacy policy. If you don't want any external calls, set `/prompt-optimizer off`.
+- The local database keeps 90 days of rewrites by default before pruning. Delete `metrics.db` any time to reset.
+
+---
 
 ## Hooks used
 
-- `pre_gateway_dispatch` — rewrite incoming gateway messages
-- `pre_user_message` — rewrite CLI/TUI messages
-- `transform_llm_output` — append badge after assistant responses
+| Hook | Purpose |
+|---|---|
+| `pre_user_message` | Rewrite messages from CLI / TUI before they reach the agent. |
+| `pre_gateway_dispatch` | Rewrite messages from Discord / Telegram / Slack / etc. |
+| `transform_llm_output` | Append an inline quality-badge to the assistant's reply when a rewrite happened. |
 
-## Config
+---
 
-No `config.yaml` keys required. The plugin reads:
-- `plugins.entries.prompt-optimizer.llm.*` for LLM override trust (standard Hermes)
+## Bypass prefixes
 
-## Author
+The plugin used to support `/quick`, `*simple`, `#basic` as one-off bypasses. In practice the slash-command dispatcher in `hermes chat` claims anything starting with `/`, so only gateway surfaces honour the prefixes reliably. **Recommended**: use mode flips (`/prompt-optimizer off` then `/prompt-optimizer auto`) instead.
 
-KENSEI / Octacon
+---
+
+## Development
+
+Clone, edit, link into Hermes:
+
+```bash
+git clone https://github.com/Sahil-SS9/hermes-multichannel-prompt-optimizer ~/.hermes/plugins/prompt-optimizer
+hermes plugins enable prompt-optimizer
+```
+
+Run the test suite:
+
+```bash
+cd /path/to/hermes-agent
+venv/bin/pytest tests/plugins/test_prompt_optimizer_plugin.py -v
+```
+
+PRs welcome. Please include tests for any new hook semantics or scoring changes.
+
+---
+
+## Roadmap
+
+- [ ] Wire `model_used` field for CLI rewrites (currently hardcoded blank — minor analytics gap).
+- [ ] Per-user model-profile overrides (currently global).
+- [ ] Optional GitHub Actions example for cron-driven weekly digests posted to Discord/Slack.
+
+---
+
+## Credits
+
+Built by [Sahil Saghir](https://github.com/Sahil-SS9) for the KENSEI / Octacon personal-agent stack. Released under MIT in case it's useful to anyone else running Hermes Agent in production.
+
+---
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
