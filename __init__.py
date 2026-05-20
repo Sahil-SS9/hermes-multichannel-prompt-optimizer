@@ -158,6 +158,16 @@ def _on_pre_gateway_dispatch(event=None, gateway=None, session_store=None, **kw)
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
         return None
 
+    # Slash commands (Discord, Telegram, etc.) are routing instructions to
+    # the gateway, not prompts to optimise. Bypass anything that looks like
+    # one: starts with '/', first whitespace-delimited word has no further
+    # slashes (so file paths like '/Users/foo.md what's this?' still get
+    # optimised). Mirrors hermes core's `_looks_like_slash_command`.
+    if stripped.startswith("/"):
+        first_word = stripped.split(None, 1)[0]
+        if "/" not in first_word[1:]:
+            return None
+
     model = ""
     provider = ""
     session_id = ""
