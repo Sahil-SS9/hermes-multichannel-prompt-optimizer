@@ -18,6 +18,7 @@ This pattern repeats across every conversation. Over a month, the savings are me
 
 - **Intercepts** every user message before it reaches the agent — on CLI, TUI, and any gateway platform.
 - **Tailors** the rewrite to the target model along two axes: **vendor family** (claude, openai, deepseek, google, nvidia, kimi, qwen, mistral) and **capability** (reasoning vs general). Same prompt headed to o3-mini gets front-loaded constraints; same prompt headed to Claude Sonnet gets XML-tagged structure.
+- **Preserves non-English prompts** — automatically detects the language and keeps the rewrite in the same language, no translation.
 - **Scores** before/after across 5 dimensions: clarity, specificity, terminology, actionability, structure.
 - **Records** every rewrite into a local SQLite database for analytics and longitudinal coaching.
 - **Surfaces** insights via slash commands: comparisons, reusable suggestions, analytics by day/week/month.
@@ -34,6 +35,24 @@ This pattern repeats across every conversation. Over a month, the savings are me
 | Discord | Silent rewrite | Diff sent as a message; reply `y` / `n` |
 | Telegram, Slack, IRC, etc. | Silent rewrite | Same as Discord |
 
+### Multi-language support
+
+The plugin **automatically detects non-English prompts** and preserves the original language during rewriting. If you type in Arabic, French, Chinese, Spanish, German, Russian, or any other language:
+
+- The rewriter is instructed to **keep the same language** — no translation.
+- The heuristic quality scorer **skips English-only checks** (action verbs, context words) so non-English prompts aren't unfairly penalised.
+- Detection uses `langid` (97 languages) with a Unicode-range fallback for CJK, Arabic, Cyrillic, Hebrew, Devanagari, etc.
+
+The detection runs at the engine level, so it applies to **all surfaces equally** — CLI, TUI, Discord, Telegram.
+
+To install the language detection dependency:
+
+```bash
+pip install langid
+```
+
+Without `langid`, the plugin falls back to a Unicode-range heuristic that catches CJK, Arabic, Cyrillic, Hebrew, and other non-Latin scripts, but won't distinguish French/Spanish/German etc. from English for all-ASCII text.
+
 ---
 
 ## Requirements
@@ -41,6 +60,7 @@ This pattern repeats across every conversation. Over a month, the savings are me
 - **Hermes Agent** with the `pre_user_message` plugin hook. This hook is needed for CLI/TUI rewrites. If your Hermes build is missing it, the gateway path (Discord/Telegram/Slack/...) still works via `pre_gateway_dispatch` — only `hermes chat` and `hermes chat --tui` are affected.
   - Upstream PR adding the hook: [NousResearch/hermes-agent#29526](https://github.com/NousResearch/hermes-agent/pull/29526). Once merged, every Hermes install will support all surfaces out of the box.
 - Python 3.11+
+- **Optional:** `pip install langid` for accurate language detection across 97 languages. Without it, only non-Latin scripts (CJK, Arabic, Cyrillic, etc.) are detected via Unicode-range heuristic.
 - An LLM provider configured in Hermes for the optimiser model (the plugin uses Hermes's `ctx.llm` facade, so it inherits your active provider/auth — no separate keys needed by default).
 
 ---
@@ -249,6 +269,7 @@ PRs welcome. Please include tests for any new hook semantics or scoring changes.
 
 - [x] Family + capability composition for model-tailored rewrites.
 - [x] Fix CLI `model=""` plumbing so the target model reaches the optimiser.
+- [x] Multi-language support — auto-detect non-English prompts, preserve original language during rewrite.
 - [ ] LLM-judged second-pass scoring (ask the target model to rate the rewrite). Adds latency; pending data on whether composition alone is enough.
 - [ ] Per-user model-profile overrides scoped per session.
 - [ ] Optional GitHub Actions example for cron-driven weekly digests posted to Discord/Slack.
