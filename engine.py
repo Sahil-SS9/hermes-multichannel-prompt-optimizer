@@ -966,26 +966,94 @@ def _analytics_rows(kind: str) -> List[Tuple[str, int, float, float, float]]:
 # Scoring (heuristic fallback)
 # ---------------------------------------------------------------------------
 
+def _detect_language(text: str) -> Optional[str]:
+    """Detect if text is non-English. Returns ISO 639-1 code or None.
+
+    Uses langid if installed (fast, 97 languages). Falls back to a
+    Unicode-range heuristic for CJK, Arabic, Cyrillic, etc.
+
+    False positives (flagging English as non-English) are safe — the
+    rewriter just sees a harmless "preserve the language" instruction
+    and still rewrites English correctly. False negatives miss real
+    non-English prompts, which is the actual problem we're solving.
+    """
+    if not text or not text.strip():
+        return None
+
+    # 1. Unicode-range scan for scripts that are definitively not English
+    #    (CJK, Arabic, Cyrillic, Hebrew, Hangul, Thai, Devanagari, etc.)
+    non_latin = 0
+    for c in text:
+        cp = ord(c)
+        if cp > 127:
+            if (0x4E00 <= cp <= 0x9FFF or   # CJK Unified
+                0x0600 <= cp <= 0x06FF or   # Arabic
+                0x0400 <= cp <= 0x04FF or   # Cyrillic
+                0x0590 <= cp <= 0x05FF or   # Hebrew
+                0xAC00 <= cp <= 0xD7AF or   # Hangul
+                0x0E00 <= cp <= 0x0E7F or   # Thai
+                0x0900 <= cp <= 0x097F or   # Devanagari
+                0x3040 <= cp <= 0x309F or   # Hiragana
+                0x30A0 <= cp <= 0x30FF):    # Katakana
+                non_latin += 1
+    text_len = max(1, len(text))
+    if non_latin / text_len > 0.1:
+        try:
+            import langid
+            lang, _ = langid.classify(text)
+            return lang if lang != "en" else "other"
+        except ImportError:
+            return "other"
+
+    # 2. Latin-script non-English (French, Spanish, German, etc.) via langid
+    try:
+        import langid
+        ranked = langid.rank(text)
+        top_lang, top_conf = ranked[0]
+        delta = top_conf - ranked[1][1]
+        # Higher threshold for short text, lower for longer text
+        min_delta = 2.0 if text_len < 30 else 2.5
+        if top_lang != "en" and delta > min_delta:
+            # Safety: find English in the ranking and check how far it is.
+            # If English is a very close second (within 15 points), the
+            # text is likely English. Otherwise we're confident it's non-English.
+            en_conf = next((conf for lang, conf in ranked if lang == "en"), None)
+            if en_conf is not None and (top_conf - en_conf) < 15.0:
+                return None  # English is too close — probable false positive
+            return top_lang
+        if top_lang == "en" and delta > min_delta:
+            return None  # confidently English
+    except ImportError:
+        pass
+
+    return None
+
+
 def _score_prompt_heuristic(text: str) -> Tuple[float, int]:
     """Return (quality_score_0_100, estimated_tokens) via heuristic."""
     if not text:
         return 0.0, 0
     est_tokens = max(1, len(text) // 4)
     score = 0.0
-    # 1. Clarity
-    action_verbs = {"write", "build", "fix", "refactor", "add", "remove", "explain",
-                    "compare", "review", "test", "debug", "create", "generate",
-                    "list", "find", "search", "update", "delete"}
-    first_ten = " ".join(text.split()[:10]).lower()
-    if any(v in first_ten for v in action_verbs):
-        score += 20.0
-    # 2. Structure
+
+    # Language-aware scoring: skip English-only checks for non-English text
+    is_ne = _detect_language(text) is not None
+
+    # 1. Clarity — English action-verb check is meaningless for non-English
+    if not is_ne:
+        action_verbs = {"write", "build", "fix", "refactor", "add", "remove", "explain",
+                        "compare", "review", "test", "debug", "create", "generate",
+                        "list", "find", "search", "update", "delete"}
+        first_ten = " ".join(text.split()[:10]).lower()
+        if any(v in first_ten for v in action_verbs):
+            score += 20.0
+    # 2. Structure — markdown/bullets work in any language
     if any(m in text for m in ("```", "\n- ", "1. ", "##", "<", "| ")):
         score += 20.0
-    # 3. Specificity
+    # 3. Specificity — digits, extensions, @mentions are universal
     if re.search(r"\d+|\.[a-zA-Z]{2,4}|@[a-zA-Z]|\bfile\b|\bpath\b|\bfunction\b", text):
         score += 20.0
-    # 4. Conciseness
+    # 4. Conciseness — sentence-length analysis is language-agnostic
     sentences = [s.strip() for s in re.split(r"[.!?\n]", text) if s.strip()]
     if sentences:
         avg_len = est_tokens / max(1, len(sentences))
@@ -993,8 +1061,10 @@ def _score_prompt_heuristic(text: str) -> Tuple[float, int]:
             score += 20.0
         elif avg_len < 25:
             score += 10.0
-    # 5. Context
-    if any(m in text.lower() for m in ("previous", "earlier", "as we", "continue")):
+    # 5. Context — English context words are meaningless for non-English
+    if is_ne:
+        score += 15.0  # default credit — can't meaningfully assess in heuristic
+    elif any(m in text.lower() for m in ("previous", "earlier", "as we", "continue")):
         score += 20.0
     return min(100.0, score), est_tokens
 
@@ -1121,6 +1191,18 @@ def _run_optimizer(original, model, provider, pllm: Any,
     base_template = template or select_template()
     guidance = _render_profile_guidance(model, family, capability)
     effective_template = _inject_guidance_into_template(base_template, guidance)
+
+    # Language preservation: detect if the prompt is non-English and
+    # instruct the rewriter to preserve the original language.
+    detected = _detect_language(original)
+    if detected:
+        label = detected if detected != "other" else "a non-English"
+        lang_block = (
+            "\nLANGUAGE PRESERVATION:\n"
+            f"The user's prompt is written in {label} language. "
+            "Rewrite it in the SAME language. Do NOT translate it.\n"
+        )
+        effective_template = _inject_guidance_into_template(effective_template, lang_block)
 
     result = _try_rewrite_sync(original, pllm, template=effective_template)
     if not result:
