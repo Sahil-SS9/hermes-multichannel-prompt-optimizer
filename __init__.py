@@ -35,6 +35,7 @@ from typing import Any, Dict, Tuple
 from .engine import (
     BYPASS_PREFIXES,
     OPTIMIZER_TIMEOUT_S,
+    is_skill_invocation,
     _analytics_rows,
     _build_full_report,
     _clip,
@@ -158,6 +159,10 @@ def _on_pre_gateway_dispatch(event=None, gateway=None, session_store=None, **kw)
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
         return None
 
+    if is_skill_invocation(stripped):
+        logger.info("prompt-optimizer: skipped — skill invocation")
+        return None
+
     # Slash commands (Discord, Telegram, etc.) are routing instructions to
     # the gateway, not prompts to optimise. Bypass anything that looks like
     # one: starts with '/', first whitespace-delimited word has no further
@@ -268,6 +273,10 @@ def _on_pre_user_message(message="", session_id="", platform="cli", **kw):
         return None
     stripped = message.strip()
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
+        return None
+
+    if is_skill_invocation(stripped):
+        logger.info("prompt-optimizer: skipped — skill invocation")
         return None
 
     # Target model comes via the pre_user_message hook kwargs from
@@ -551,6 +560,8 @@ def get_tui_preview(session_key: str, text: str, model: str = "",
     stripped = text.strip()
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
         return {"status": "bypass", "reason": "bypass_prefix"}
+    if is_skill_invocation(stripped):
+        return {"status": "bypass", "reason": "skill_invocation"}
 
     record = _run_optimizer_bridge(text, model, provider)
     if record is None:

@@ -23,6 +23,7 @@ import sqlite3
 import threading
 import textwrap
 import time
+import concurrent.futures
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,6 +48,16 @@ OPTIMIZER_TIMEOUT_S = 30
 OPTIMIZER_MODEL = "deepseek-v4-flash"
 
 BYPASS_PREFIXES = ("/quick", "*simple", "#basic")
+
+# Skill invocations are curated prompts injected by the skill loader, not
+# user prose — rewriting them risks corrupting the skill contract and drags
+# every skill invocation through an auxiliary LLM round-trip.
+SKILL_INVOCATION_MARKER = '[IMPORTANT: The user has invoked the'
+
+
+def is_skill_invocation(text: str) -> bool:
+    """True when the prompt is a skill-loader invocation rather than user prose."""
+    return text.lstrip().startswith(SKILL_INVOCATION_MARKER)
 
 _PENDING_TIMEOUT_S = 120
 
@@ -1154,11 +1165,33 @@ def _try_rewrite_sync(text: str, pllm: Any,
     user_msg = tpl.system_prompt.format(original=text)
 
     try:
-        result = pllm.complete(
+        # The timeout kwarg only bounds a single provider request — the
+        # auxiliary client's fallback chain can stack several ~90s provider
+        # timeouts on top of it, freezing the turn for minutes. Run the call
+        # on a worker thread and enforce OPTIMIZER_TIMEOUT_S as a hard
+        # wall-clock cap, failing open to "no rewrite". A hung provider call
+        # may leave the worker thread lingering until its own timeout fires;
+        # that is the trade-off for never blocking the user's turn.
+        pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="prompt-optimizer-rewrite")
+        future = pool.submit(
+            pllm.complete,
             messages=[{"role": "user", "content": user_msg}],
             max_tokens=512,
             timeout=OPTIMIZER_TIMEOUT_S,
         )
+        # wait=False: never block on a hung provider thread; it dies with
+        # its own timeout while the user's turn proceeds without a rewrite.
+        pool.shutdown(wait=False)
+        try:
+            result = future.result(timeout=OPTIMIZER_TIMEOUT_S)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            logger.info(
+                "prompt-optimizer: rewrite abandoned after %ss wall-clock cap",
+                OPTIMIZER_TIMEOUT_S,
+            )
+            return None
         raw = result.text.strip() if result and result.text else None
         if not raw:
             return None
