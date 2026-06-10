@@ -59,6 +59,35 @@ def is_skill_invocation(text: str) -> bool:
     """True when the prompt is a skill-loader invocation rather than user prose."""
     return text.lstrip().startswith(SKILL_INVOCATION_MARKER)
 
+
+# Structured commands carry machine-readable payloads (delegation task lists,
+# rubrics, fenced code) where a rewrite can silently corrupt the contract —
+# same principle as skill invocations. Extend the verb list via the
+# PROMPT_OPTIMIZER_BYPASS_VERBS env var (comma-separated, prepended).
+STRUCTURED_COMMAND_VERBS = ("delegate_task", "delegate")
+
+
+def _bypass_verbs() -> tuple:
+    extra = os.getenv("PROMPT_OPTIMIZER_BYPASS_VERBS", "")
+    verbs = tuple(v.strip().lower() for v in extra.split(",") if v.strip())
+    return verbs + STRUCTURED_COMMAND_VERBS
+
+
+def is_structured_command(text: str) -> bool:
+    """True when the prompt is a structured command rather than user prose.
+
+    Matches messages containing a fenced code block, or whose first word
+    is a known orchestration verb (trailing ``:`` tolerated).
+    """
+    stripped = text.strip()
+    if "```" in stripped:
+        return True
+    parts = stripped.split(None, 1)
+    if not parts:
+        return False
+    first_word = parts[0].lower().rstrip(":")
+    return first_word in _bypass_verbs()
+
 _PENDING_TIMEOUT_S = 120
 
 # Path to the model-profiles YAML; user-editable in place

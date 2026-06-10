@@ -243,6 +243,15 @@ If your local YAML is missing or malformed, the plugin falls back to baked-in de
 
 The plugin used to support `/quick`, `*simple`, `#basic` as one-off bypasses. In practice the slash-command dispatcher in `hermes chat` claims anything starting with `/`, so only gateway surfaces honour the prefixes reliably. **Recommended**: use mode flips (`/prompt-optimizer off` then `/prompt-optimizer auto`) instead.
 
+## Structured command bypass
+
+Structured commands carry machine-readable payloads where a rewrite can silently corrupt the contract, so they are never optimised. A message bypasses the optimiser on every surface when:
+
+- it contains a fenced code block (```` ``` ````), or
+- its first word is an orchestration verb: `delegate_task` or `delegate` (trailing `:` tolerated).
+
+Extend the verb list with the `PROMPT_OPTIMIZER_BYPASS_VERBS` environment variable (comma-separated), e.g. `PROMPT_OPTIMIZER_BYPASS_VERBS=fanout,council`. Verbs only match as the first word; prose like "should I delegate this?" is still optimised.
+
 ---
 
 ## Development
