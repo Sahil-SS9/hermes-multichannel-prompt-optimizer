@@ -35,6 +35,8 @@ This pattern repeats across every conversation. Over a month, the savings are me
 | Discord | Silent rewrite | Diff sent as a message; reply `y` / `n` |
 | Telegram, Slack, IRC, etc. | Silent rewrite | Same as Discord |
 
+For X/Twitter-specific prompts, consider pairing this plugin with [Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet). Hermes Tweet can supply the social context with `tweet_explore` or `tweet_read`, while this optimizer keeps the user's multichannel prompt concise; keep `tweet_action` behind the explicit `HERMES_TWEET_ENABLE_ACTIONS=true` gate.
+
 ### Multi-language support
 
 The plugin **automatically detects non-English prompts** and preserves the original language during rewriting. If you type in Arabic, French, Chinese, Spanish, German, Russian, or any other language:
