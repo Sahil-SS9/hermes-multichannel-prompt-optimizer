@@ -160,6 +160,12 @@ def _on_pre_gateway_dispatch(event=None, gateway=None, session_store=None, **kw)
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
         return None
 
+    # Short prompts (< 5 words or < 35 chars) do not need LLM rewriting
+    words = stripped.split()
+    if len(words) < 5 or len(stripped) < 35:
+        logger.info("prompt-optimizer: skipped — short message (%d words)", len(words))
+        return None
+
     if is_skill_invocation(stripped):
         logger.info("prompt-optimizer: skipped — skill invocation")
         return None
