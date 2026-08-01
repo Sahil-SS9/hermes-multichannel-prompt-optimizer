@@ -44,8 +44,8 @@ HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 PLUGIN_DIR = HERMES_HOME / "plugins" / "prompt-optimizer"
 METRICS_DB = PLUGIN_DIR / "metrics.db"
 
-OPTIMIZER_TIMEOUT_S = 30
-OPTIMIZER_MODEL = "deepseek-v4-flash"
+OPTIMIZER_TIMEOUT_S = 3
+OPTIMIZER_MODEL = "deepseek-flash"
 
 BYPASS_PREFIXES = ("/quick", "*simple", "#basic")
 
