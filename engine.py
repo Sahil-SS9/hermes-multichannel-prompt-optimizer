@@ -45,7 +45,7 @@ PLUGIN_DIR = HERMES_HOME / "plugins" / "prompt-optimizer"
 METRICS_DB = PLUGIN_DIR / "metrics.db"
 
 OPTIMIZER_TIMEOUT_S = 30
-OPTIMIZER_MODEL = "deepseek-v4-flash"
+OPTIMIZER_MODEL = "oc/deepseek-v4-flash-free"
 
 BYPASS_PREFIXES = ("/quick", "*simple", "#basic")
 

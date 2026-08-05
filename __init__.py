@@ -1,17 +1,23 @@
 """prompt-optimizer plugin — model-aware prompt rewrite + metrics + coaching.
 
-Wires four behaviours:
+Wires three behaviours:
 
-1. ``pre_gateway_dispatch`` hook — intercepts incoming user messages, runs
-   the optimizer engine (rewrite for token efficiency + model-aware terminology),
+1. ``pre_gateway_dispatch`` hook — intercepts incoming user messages (all
+   gateway surfaces: Discord, Telegram, Slack, WhatsApp, etc.), runs the
+   optimizer engine (rewrite for token efficiency + model-aware terminology),
    scores before/after, stores metrics, and returns ``{"action": "rewrite"}``.
 
-2. ``pre_user_message`` hook — intercepts CLI/TUI messages before agent sees them.
-
-3. ``transform_llm_output`` hook — appends a lightweight inline badge to
+2. ``transform_llm_output`` hook — appends a lightweight inline badge to
    every assistant response when a rewrite occurred this turn.
 
-4. ``/prompt-stats`` and ``/prompt-optimizer`` slash commands.
+3. ``/prompt-stats`` and ``/prompt-optimizer`` slash commands.
+
+The TUI surface is handled separately via ``get_tui_preview()``, which is
+called by the TUI gateway's ``prompt.optimize.preview`` RPC — the user sees
+a diff overlay and makes an accept/reject/edit decision before the message
+is submitted. No CLI/TUI pre-message hook is needed (Hermes does not expose
+one; ``pre_api_request`` is an observer hook that fires after the message is
+already in the API request and cannot rewrite it).
 
 Dual mode:
   auto        — silent rewrite, no prompt
@@ -254,175 +260,11 @@ def _on_pre_gateway_dispatch(event=None, gateway=None, session_store=None, **kw)
 
 
 # ---------------------------------------------------------------------------
-# CLI hook
+# CLI hook removed — Hermes does not expose a pre-message hook that allows
+# rewriting. ``pre_api_request`` is observer-only (fires after the message is
+# in the API request, cannot modify it). CLI/TUI optimization is handled via
+# ``get_tui_preview()`` and the TUI gateway ``prompt.optimize.preview`` RPC.
 # ---------------------------------------------------------------------------
-
-def _on_pre_user_message(message="", session_id="", platform="cli", **kw):
-    """Intercept CLI messages, optionally rewrite.
-
-    Skipped on the TUI surface because the TUI client owns the
-    optimisation flow via the ``prompt.optimize.preview`` RPC — by the
-    time a message reaches ``prompt.submit`` (and therefore this hook)
-    the user has already made an accept/reject/edit decision in the
-    overlay. Running the optimiser a second time here would re-show the
-    diff and stall the turn.
-    """
-    global _mode
-    if platform == "tui":
-        return None
-    with _mode_lock:
-        mode = _mode
-    if mode == "off":
-        return None
-    if not isinstance(message, str) or not message.strip():
-        return None
-    stripped = message.strip()
-    if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
-        return None
-
-    if is_skill_invocation(stripped):
-        logger.info("prompt-optimizer: skipped — skill invocation")
-        return None
-
-    if is_structured_command(stripped):
-        logger.info("prompt-optimizer: skipped — structured command")
-        return None
-
-    # Target model comes via the pre_user_message hook kwargs from
-    # conversation_loop.py. Used by resolve_model_profile() to tailor the
-    # rewrite. Provider isn't passed by this hook today; leave blank.
-    model = kw.get("model", "") or ""
-    provider = ""
-
-    if mode == "interactive":
-        lowered = stripped.lower()
-        sid = session_id or "unknown"
-
-        with _pending_lock:
-            has_pending = sid in _pending_approvals
-
-        if has_pending:
-            expired_record = _check_pending_expiry(sid)
-            if expired_record is None:
-                if lowered in ("y", "yes"):
-                    with _pending_lock:
-                        record, _ = _pending_approvals.pop(sid)
-                    with _rewrite_lock:
-                        _session_rewrites[sid] = record
-                    _record(sid, platform, record.original, record.rewritten,
-                            record.quality_before, record.quality_after,
-                            record.token_delta_pct, record.model_profile,
-                            model, mode, approved=True)
-                    return {"action": "rewrite", "text": record.rewritten}
-                elif lowered in ("n", "no"):
-                    with _pending_lock:
-                        record, _ = _pending_approvals.pop(sid)
-                    _record(sid, platform, record.original, record.original,
-                            record.quality_before, record.quality_after,
-                            record.token_delta_pct, record.model_profile,
-                            model, mode, approved=False)
-                    return {"action": "rewrite", "text": record.original}
-                else:
-                    with _pending_lock:
-                        old_record, _ = _pending_approvals.pop(sid)
-                    with _rewrite_lock:
-                        _session_rewrites[sid] = old_record
-                    _record(sid, platform, old_record.original, old_record.rewritten,
-                            old_record.quality_before, old_record.quality_after,
-                            old_record.token_delta_pct, old_record.model_profile,
-                            model, mode, approved=True)
-
-        record = _run_optimizer_bridge(message, model, provider)
-        if record is None:
-            return None
-        return _cli_interactive_approval(sid, record)
-    else:
-        record = _run_optimizer_bridge(message, model, provider)
-        if record is None:
-            return None
-
-        sid = session_id or "unknown"
-        with _rewrite_lock:
-            _session_rewrites[sid] = record
-        _record(sid, platform, record.original, record.rewritten,
-                record.quality_before, record.quality_after,
-                record.token_delta_pct, record.model_profile,
-                model, mode, approved=True)
-        logger.info("prompt-optimizer: rewrote %r", message[:60])
-        return {"action": "rewrite", "text": record.rewritten}
-
-
-def _build_overlay_question(record):
-    """Render the diff for the AskUserQuestion overlay.
-
-    Avoids ``_format_diff`` because that targets the message-based flow
-    (200-char clipping, trailing 'Reply Y / N' hint). Here we want full
-    text with paragraph separation so the arrow-key overlay reads well.
-    """
-    if record.token_delta_pct > 0:
-        token_msg = f"saved {abs(record.token_delta_pct):.0f}%"
-    elif record.token_delta_pct < 0:
-        token_msg = f"used +{abs(record.token_delta_pct):.0f}%"
-    else:
-        token_msg = "no token change"
-
-    q_diff = record.quality_after - record.quality_before
-
-    return (
-        f"Prompt Optimizer\n"
-        f"Quality: {record.quality_before:.0f} \N{RIGHTWARDS ARROW} "
-        f"{record.quality_after:.0f} ({q_diff:+.0f})    "
-        f"Tokens: {token_msg}\n"
-        f"\n"
-        f"── Original ────────────────────────────────────────\n"
-        f"{record.original.strip()}\n"
-        f"\n"
-        f"── Rewritten ───────────────────────────────────────\n"
-        f"{record.rewritten.strip()}\n"
-        f"\n"
-        f"Use the rewritten prompt?"
-    )
-
-
-def _cli_interactive_approval(sid, record):
-    """Show the diff via the CLI's AskUserQuestion-style overlay.
-
-    Prefers ``ctx.ask_user(question, choices)`` — the same arrow-key
-    overlay the ``clarify`` tool uses. Blocks the agent thread while the
-    user navigates; returns once they pick a choice or it times out.
-
-    Falls back to the message-based skip flow when no overlay is
-    available (gateway/Discord, headless scripts, tests) — diff is
-    printed, pending rewrite stashed, current turn aborted via
-    ``{"action": "skip"}``; the user's next message resolves it.
-    """
-    if _ctx is not None and hasattr(_ctx, "ask_user"):
-        question = _build_overlay_question(record)
-        choice = _ctx.ask_user(question, ["accept", "reject"])
-        if choice in ("accept", "reject"):
-            approved = choice == "accept"
-            text = record.rewritten if approved else record.original
-            if approved:
-                with _rewrite_lock:
-                    _session_rewrites[sid] = record
-            _record(
-                sid, "cli", record.original, record.rewritten,
-                record.quality_before, record.quality_after,
-                record.token_delta_pct, record.model_profile,
-                "", "interactive", approved=approved,
-            )
-            return {"action": "rewrite", "text": text}
-        # choice is None — overlay unavailable or timed out. Fall through
-        # to the message-based flow below.
-
-    diff_text = _format_diff(record)
-    print(
-        f"\n{diff_text}\n\n"
-        "Reply 'y' to use the rewrite, 'n' to keep the original."
-    )
-    with _pending_lock:
-        _pending_approvals[sid] = (record, time.time())
-    return {"action": "skip", "reason": "awaiting_prompt_optimizer_approval"}
 
 
 def _on_transform_llm_output(text="", response_text="", session_id="", **kw):
@@ -605,7 +447,6 @@ def register(ctx) -> None:
     _ctx = ctx
     logger.info("prompt-optimizer: initializing")
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
-    ctx.register_hook("pre_user_message", _on_pre_user_message)
     ctx.register_hook("transform_llm_output", _on_transform_llm_output)
     ctx.register_command(
         "prompt-optimizer", handler=_handle_prompt_optimizer,
