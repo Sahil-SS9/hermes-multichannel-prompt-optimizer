@@ -263,11 +263,13 @@ git clone https://github.com/Sahil-SS9/hermes-multichannel-prompt-optimizer ~/.h
 hermes plugins enable prompt-optimizer
 ```
 
-Run the test suite:
+Run the test suite (from a directory *outside* the plugin — its hyphenated
+name is not a valid Python package identifier, which breaks pytest's
+package-root collection when the plugin dir is the rootdir):
 
 ```bash
-cd /path/to/hermes-agent
-venv/bin/pytest tests/plugins/test_prompt_optimizer_plugin.py -v
+cd /tmp && /path/to/hermes-agent/venv/bin/python -m pytest \
+    ~/.hermes/plugins/prompt-optimizer/tests/test_prompt_optimizer_plugin.py -v
 ```
 
 PRs welcome. Please include tests for any new hook semantics or scoring changes.
