@@ -361,6 +361,24 @@ def test_engine_resolve_model_profile_deepseek(engine):
     assert r_cap in ("reasoning", None)  # don't over-assert capability taxonomy
 
 
+def test_engine_timeout_default(engine):
+    # 3s was silently disabling rewrites on real LLM latency; default is 10s.
+    assert engine.OPTIMIZER_TIMEOUT_S == 10
+
+
+def test_engine_timeout_env_override(engine, monkeypatch):
+    import importlib
+
+    monkeypatch.setenv("PROMPT_OPTIMIZER_TIMEOUT", "7")
+    importlib.reload(engine)
+    try:
+        assert engine.OPTIMIZER_TIMEOUT_S == 7
+    finally:
+        monkeypatch.delenv("PROMPT_OPTIMIZER_TIMEOUT", raising=False)
+        importlib.reload(engine)
+        assert engine.OPTIMIZER_TIMEOUT_S == 10  # default restored
+
+
 # ---------------------------------------------------------------------------
 # engine — _run_optimizer rewrite path
 # ---------------------------------------------------------------------------

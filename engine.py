@@ -44,7 +44,12 @@ HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 PLUGIN_DIR = HERMES_HOME / "plugins" / "prompt-optimizer"
 METRICS_DB = PLUGIN_DIR / "metrics.db"
 
-OPTIMIZER_TIMEOUT_S = 3
+# Hard wall-clock cap for a rewrite LLM call, in seconds. The rewrite runs
+# on a worker thread and fails open ("no rewrite") when it expires, so this
+# never blocks the user's turn — but a value too low silently disables
+# rewriting on slow providers (real LLM round-trips routinely exceed 3s).
+# Tune with PROMPT_OPTIMIZER_TIMEOUT (seconds).
+OPTIMIZER_TIMEOUT_S = int(os.getenv("PROMPT_OPTIMIZER_TIMEOUT", "10"))
 
 BYPASS_PREFIXES = ("/quick", "*simple", "#basic")
 
