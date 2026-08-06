@@ -157,12 +157,25 @@ def _on_pre_gateway_dispatch(event=None, gateway=None, session_store=None, **kw)
         return None
     stripped = original.strip()
 
+    # Interactive approval replies ("y"/"n" on the same session) are short
+    # by nature — resolve the pending-approval state BEFORE the short-message
+    # fast-path so a one-word approval is never swallowed by it.
+    session_id = ""
+    if session_store is not None:
+        session_id = getattr(session_store, "session_id", "") or ""
+    sid = session_id or "unknown"
+    pending_approval = False
+    if mode == "interactive":
+        with _pending_lock:
+            pending_approval = sid in _pending_approvals
+
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
         return None
 
-    # Short prompts (< 5 words or < 35 chars) do not need LLM rewriting
+    # Short prompts (< 5 words or < 35 chars) do not need LLM rewriting —
+    # except interactive approval replies, which are handled above.
     words = stripped.split()
-    if len(words) < 5 or len(stripped) < 35:
+    if (len(words) < 5 or len(stripped) < 35) and not pending_approval:
         logger.info("prompt-optimizer: skipped — short message (%d words)", len(words))
         return None
 
