@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import json
 import sys
 import types
 from pathlib import Path
@@ -200,14 +199,18 @@ def test_register_pre_user_message_when_supported(po, monkeypatch):
 
 @pytest.fixture
 def gateway(po):
-    """Reset the plugin's global mode/ctx between tests."""
+    """Reset the plugin's global mode/ctx/pending state between tests."""
     prev_mode = po._mode
     prev_ctx = po._ctx
     po._mode = "auto"
     po._ctx = None
+    po._pending_approvals.clear()
+    po._session_rewrites.clear()
     yield
     po._mode = prev_mode
     po._ctx = prev_ctx
+    po._pending_approvals.clear()
+    po._session_rewrites.clear()
 
 
 def test_gateway_mode_off_passthrough(po, gateway):
