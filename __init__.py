@@ -606,12 +606,35 @@ def get_tui_preview(session_key: str, text: str, model: str = "",
 # Plugin registration
 # ---------------------------------------------------------------------------
 
+def _hook_supported(name: str) -> bool:
+    """True if the running Hermes core knows this hook name.
+
+    Hermes cores before upstream PR #29526 (NousResearch/hermes-agent)
+    lack ``pre_user_message``; registering it produces a startup warning and
+    a callback that never fires. The import is wrapped so a renamed or
+    removed core constant can never break plugin load — fall back to
+    optimistic registration (previous behaviour) if we can't introspect.
+    """
+    try:
+        from hermes_cli.plugins import VALID_HOOKS
+        return name in VALID_HOOKS
+    except Exception:
+        return True
+
+
 def register(ctx) -> None:
     global _ctx
     _ctx = ctx
     logger.info("prompt-optimizer: initializing")
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
-    ctx.register_hook("pre_user_message", _on_pre_user_message)
+    if _hook_supported("pre_user_message"):
+        ctx.register_hook("pre_user_message", _on_pre_user_message)
+    else:
+        logger.info(
+            "prompt-optimizer: 'pre_user_message' hook unavailable in this "
+            "Hermes build (upstream PR #29526 not merged) — CLI/TUI rewrite "
+            "disabled; gateway rewrite stays active via pre_gateway_dispatch"
+        )
     ctx.register_hook("transform_llm_output", _on_transform_llm_output)
     ctx.register_command(
         "prompt-optimizer", handler=_handle_prompt_optimizer,
