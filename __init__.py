@@ -8,10 +8,14 @@ Wires four behaviours:
 
 2. ``pre_user_message`` hook — intercepts CLI/TUI messages before agent sees them.
 
-3. ``transform_llm_output`` hook — appends a lightweight inline badge to
+3. ``pre_llm_call`` hook — desktop context-injection path: injects the
+   optimized prompt as guidance context on every platform (works on builds
+   lacking ``pre_user_message``; records mode="context", quality-only badge).
+
+4. ``transform_llm_output`` hook — appends a lightweight inline badge to
    every assistant response when a rewrite occurred this turn.
 
-4. ``/prompt-stats`` and ``/prompt-optimizer`` slash commands.
+5. ``/prompt-stats`` and ``/prompt-optimizer`` slash commands.
 
 Dual mode:
   auto        — silent rewrite, no prompt
@@ -81,6 +85,12 @@ _mode_lock = threading.Lock()
 # Per-session rewrite state (session_id → RewriteRecord)
 _session_rewrites: Dict[str, RewriteRecord] = {}
 _rewrite_lock = threading.Lock()
+
+# Context-mode quality badges (session_id → (quality_before, quality_after)).
+# Separate from _session_rewrites because context injection does NOT save
+# tokens (original + optimized both go on the wire) — the badge must not
+# claim a token saving it didn't produce.
+_context_badges: Dict[str, Tuple[float, float]] = {}
 
 # Interactive mode pending approvals (session_id → (record, timestamp))
 _pending_approvals: Dict[str, Tuple[RewriteRecord, float]] = {}
@@ -444,12 +454,117 @@ def _cli_interactive_approval(sid, record):
     return {"action": "skip", "reason": "awaiting_prompt_optimizer_approval"}
 
 
+# ---------------------------------------------------------------------------
+# Desktop hook (pre_llm_call context injection)
+# ---------------------------------------------------------------------------
+#
+# Hermes v0.20.0 has no pre_user_message hook (upstream PR #29526 closed
+# unmerged), so desktop/CLI messages cannot be replaced before the agent
+# sees them. pre_llm_call is the closest hook that fires on desktop turns:
+# it is called once per turn with the user message, and its return value is
+# injected as CONTEXT appended to that message (API-bound only, never
+# persisted in history — turn_context.py composes it into api_content).
+#
+# This is a guidance rewrite, not a replacement: the model sees the original
+# plus an "optimized version" directive. Tokens therefore go UP slightly
+# (original + optimized both sent), so metrics are recorded with
+# mode="context" and the badge reports quality only — never a token saving.
+
+def _on_pre_llm_call(**kw):
+    """Inject an optimized version of the user message as context.
+
+    Fires on every platform (desktop, gateway, CLI) once per turn. Skips
+    when the gateway already rewrote this turn (record present in
+    ``_session_rewrites``) to avoid double optimization, and skips short /
+    bypass / structured messages exactly like the gateway hook.
+    """
+    global _mode
+    with _mode_lock:
+        mode = _mode
+    if mode == "off":
+        return None
+    original = kw.get("user_message", "") or ""
+    if not isinstance(original, str) or not original.strip():
+        return None
+    stripped = original.strip()
+    session_id = kw.get("session_id", "") or ""
+    sid = session_id or "unknown"
+
+    # Gateway already rewrote this message this turn (pre_gateway_dispatch
+    # replaced the text, then the agent loop fired pre_llm_call with the
+    # rewritten text). Skip — rewriting the rewrite is pointless.
+    with _rewrite_lock:
+        if sid in _session_rewrites:
+            return None
+
+    if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
+        return None
+
+    words = stripped.split()
+    if len(words) < 5 or len(stripped) < 35:
+        logger.info(
+            "prompt-optimizer: context skip — short message (%d words)",
+            len(words),
+        )
+        return None
+
+    if is_skill_invocation(stripped):
+        logger.info("prompt-optimizer: context skip — skill invocation")
+        return None
+
+    if is_structured_command(stripped):
+        logger.info("prompt-optimizer: context skip — structured command")
+        return None
+
+    if stripped.startswith("/"):
+        first_word = stripped.split(None, 1)[0]
+        if "/" not in first_word[1:]:
+            return None
+
+    model = kw.get("model", "") or ""
+    platform = kw.get("platform", "") or "desktop"
+
+    record = _run_optimizer_bridge(original, model, "")
+    if record is None:
+        return None
+
+    with _rewrite_lock:
+        _context_badges[sid] = (record.quality_before, record.quality_after)
+    _record(sid, platform, record.original, record.rewritten,
+            record.quality_before, record.quality_after,
+            record.token_delta_pct, record.model_profile,
+            model, mode="context", approved=True)
+    logger.info(
+        "prompt-optimizer: context rewrite %r → %r",
+        original[:60], record.rewritten[:60],
+    )
+    return {
+        "context": (
+            "Optimized version of the user's request — use THIS as the "
+            "authoritative request:\n\n"
+            f"{record.rewritten}"
+        )
+    }
+
+
 def _on_transform_llm_output(text="", response_text="", session_id="", **kw):
     """Append inline badge when a rewrite happened this turn."""
     if not session_id:
         return None
     with _rewrite_lock:
+        # Context-mode badge first: quality only — no token claim, because
+        # context injection sends the original AND the optimized prompt.
+        ctx_badge = _context_badges.pop(session_id, None)
         record = _session_rewrites.pop(session_id, None)
+    if ctx_badge is not None:
+        base = _coerce_text(response_text) or _coerce_text(text)
+        qb, qa = ctx_badge
+        badge = (
+            f"\n\n---\n"
+            f"Optimized (context) · quality {qb:.0f}\N{RIGHTWARDS ARROW}{qa:.0f} · "
+            f"/prompt-insights"
+        )
+        return base + badge
     if record is None:
         return None
     base = _coerce_text(response_text) or _coerce_text(text)
@@ -646,7 +761,15 @@ def register(ctx) -> None:
         logger.info(
             "prompt-optimizer: 'pre_user_message' hook unavailable in this "
             "Hermes build (upstream PR #29526 not merged) — CLI/TUI rewrite "
-            "disabled; gateway rewrite stays active via pre_gateway_dispatch"
+            "disabled; desktop rewrite active via pre_llm_call context "
+            "injection; gateway rewrite stays active via pre_gateway_dispatch"
+        )
+    if _hook_supported("pre_llm_call"):
+        ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    else:
+        logger.info(
+            "prompt-optimizer: 'pre_llm_call' hook unavailable — desktop "
+            "context rewrite disabled"
         )
     ctx.register_hook("transform_llm_output", _on_transform_llm_output)
     ctx.register_command(

@@ -169,6 +169,7 @@ def test_register_hooks_and_commands(po):
     ctx = FakeCtx()
     po.register(ctx)
     assert "pre_gateway_dispatch" in ctx.hooks
+    assert "pre_llm_call" in ctx.hooks
     assert "transform_llm_output" in ctx.hooks
     # Unsupported on this build — must NOT be registered (the fix under test).
     assert "pre_user_message" not in ctx.hooks
@@ -206,11 +207,13 @@ def gateway(po):
     po._ctx = None
     po._pending_approvals.clear()
     po._session_rewrites.clear()
+    po._context_badges.clear()
     yield
     po._mode = prev_mode
     po._ctx = prev_ctx
     po._pending_approvals.clear()
     po._session_rewrites.clear()
+    po._context_badges.clear()
 
 
 def test_gateway_mode_off_passthrough(po, gateway):
@@ -322,6 +325,100 @@ def test_gateway_interactive_accept(po, engine, gateway, monkeypatch):
         event=FakeEvent("y"), session_store=FakeSessionStore("s1")
     )
     assert second == {"action": "rewrite", "text": rec.rewritten}
+
+
+# ---------------------------------------------------------------------------
+# _on_pre_llm_call — desktop context-injection path
+# ---------------------------------------------------------------------------
+
+
+def test_pre_llm_call_mode_off(po, gateway):
+    po._mode = "off"
+    assert po._on_pre_llm_call(user_message=LONG_PROMPT, session_id="s1") is None
+
+
+def test_pre_llm_call_empty(po, gateway):
+    assert po._on_pre_llm_call(user_message="   ") is None
+    assert po._on_pre_llm_call() is None
+
+
+def test_pre_llm_call_short_message(po, gateway):
+    assert po._on_pre_llm_call(user_message="Hi there", session_id="s1") is None
+
+
+def test_pre_llm_call_bypass_prefix(po, gateway):
+    assert po._on_pre_llm_call(user_message="/quick " + LONG_PROMPT) is None
+
+
+def test_pre_llm_call_skill_invocation(po, gateway):
+    text = (
+        "[IMPORTANT: The user has invoked the 'web_search' skill. Please use "
+        "it thoroughly for this research task and report back with citations.]"
+    )
+    assert po._on_pre_llm_call(user_message=text, session_id="s1") is None
+
+
+def test_pre_llm_call_slash_command(po, gateway):
+    assert po._on_pre_llm_call(user_message="/prompt-stats", session_id="s1") is None
+
+
+def test_pre_llm_call_skips_when_gateway_already_rewrote(po, engine, gateway):
+    # pre_gateway_dispatch already replaced the text and stored the record;
+    # pre_llm_call must NOT rewrite the rewrite.
+    rec = _make_record(engine, LONG_PROMPT, "Write a financial market analysis.")
+    with po._rewrite_lock:
+        po._session_rewrites["s1"] = rec
+    assert po._on_pre_llm_call(user_message="Write a financial market analysis.",
+                               session_id="s1") is None
+
+
+def test_pre_llm_call_context_injection(po, engine, gateway, monkeypatch):
+    rec = _make_record(engine, LONG_PROMPT, "Write a financial market analysis.")
+    monkeypatch.setattr(po, "_run_optimizer_bridge", lambda *a, **k: rec)
+    result = po._on_pre_llm_call(
+        user_message=LONG_PROMPT, session_id="s1", model="deepseek/deepseek-v4-flash",
+        platform="desktop",
+    )
+    assert isinstance(result, dict)
+    assert "context" in result
+    assert "Write a financial market analysis." in result["context"]
+    assert "authoritative request" in result["context"]
+    # Quality-only badge stashed for transform_llm_output, no token claim.
+    with po._rewrite_lock:
+        assert po._context_badges.get("s1") == (40.0, 90.0)
+        assert "s1" not in po._session_rewrites
+
+
+def test_pre_llm_call_no_rewrite(po, gateway, monkeypatch):
+    monkeypatch.setattr(po, "_run_optimizer_bridge", lambda *a, **k: None)
+    assert po._on_pre_llm_call(user_message=LONG_PROMPT, session_id="s1") is None
+
+
+def test_pre_llm_call_badge_quality_only(po, engine, gateway, monkeypatch):
+    # Context badge renders quality but never a token-savings claim.
+    with po._rewrite_lock:
+        po._context_badges["s1"] = (40.0, 90.0)
+    out = po._on_transform_llm_output(response_text="Done.", session_id="s1")
+    assert out is not None
+    assert "Optimized (context)" in out
+    assert "40" in out and "90" in out
+    assert "% tokens" not in out
+
+
+def test_transform_llm_output_context_then_rewrite_badge(po, engine, gateway):
+    # transform_llm_output pops the context badge first; a stale rewrite
+    # record in the same session must not double-badge.
+    with po._rewrite_lock:
+        po._context_badges["s1"] = (40.0, 90.0)
+        po._session_rewrites["s1"] = _make_record(
+            engine, LONG_PROMPT, "Write a financial market analysis."
+        )
+    out = po._on_transform_llm_output(response_text="Done.", session_id="s1")
+    assert "Optimized (context)" in out
+    assert "% tokens" not in out
+    with po._rewrite_lock:
+        assert "s1" not in po._session_rewrites
+        assert "s1" not in po._context_badges
 
 
 # ---------------------------------------------------------------------------
