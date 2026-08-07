@@ -1191,9 +1191,16 @@ def _try_rewrite_sync(text: str, pllm: Any,
         return None
 
     tpl = template or select_template()
-    user_msg = tpl.system_prompt.format(original=text)
 
     try:
+        # User prompts frequently contain literal braces (JSON, code,
+        # templates). Formatting the template with .format() raises
+        # KeyError/IndexError/ValueError on any brace. Escape literal braces
+        # first and format INSIDE the try so a malformed prompt degrades to
+        # "no rewrite" instead of propagating up through the hook and
+        # crashing the gateway on dispatch.
+        escaped = text.replace("{", "{{").replace("}", "}}")
+        user_msg = tpl.system_prompt.format(original=escaped)
         # The timeout kwarg only bounds a single provider request — the
         # auxiliary client's fallback chain can stack several ~90s provider
         # timeouts on top of it, freezing the turn for minutes. Run the call
