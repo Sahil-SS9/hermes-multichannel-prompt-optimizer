@@ -56,8 +56,26 @@ def po():
 
 
 @pytest.fixture(scope="session")
-def engine():
+def engine(po):
+    # Depends on po: the plugin loader creates the hermes_plugins namespace
+    # package in sys.modules, which this import requires.
     return importlib.import_module(f"{_NS_PARENT}.prompt_optimizer.engine")
+
+
+@pytest.fixture(autouse=True)
+def _temp_metrics_db(engine, tmp_path, monkeypatch):
+    """Isolate all metrics writes to a temp DB.
+
+    The plugin's engine reads ``METRICS_DB`` at call time via ``_db()`` ->
+    ``_ensure_db()``, so monkeypatching the module constant redirects every
+    ``_record()`` (rewrite metrics) and ``_ensure_db()`` (register()) call
+    made by the tests. Without this, running pytest writes fake rewrite rows
+    into the production ~/.hermes/plugins/prompt-optimizer/metrics.db and
+    inflates /prompt-insights stats (12 such rows were found and deleted).
+    """
+    temp_db = tmp_path / "metrics.db"
+    monkeypatch.setattr(engine, "METRICS_DB", temp_db)
+    yield
 
 
 # ---------------------------------------------------------------------------
