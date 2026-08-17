@@ -291,6 +291,10 @@ PRs welcome. Please include tests for any new hook semantics or scoring changes.
 
 Built by [Sahil Saghir](https://github.com/Sahil-SS9) for the KENSEI / Octacon personal-agent stack. Released under MIT in case it's useful to anyone else running Hermes Agent in production.
 
+Contributors:
+
+- [benzntech](https://github.com/benzntech) — short-message fast-path, interactive-approval fix, timeout hardening, hook-registration guard, and the test suite (originating contributions in [PR #4](https://github.com/Sahil-SS9/hermes-multichannel-prompt-optimizer/pull/4)).
+
 ---
 
 ## License
