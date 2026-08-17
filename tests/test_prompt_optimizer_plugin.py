@@ -155,11 +155,15 @@ def test_hook_supported_known_hooks(po):
     assert po._hook_supported("pre_llm_call") is True
 
 
-def test_hook_supported_pre_user_message_missing_on_current_core(po):
-    # Regression: this Hermes build has no pre_user_message hook (upstream
-    # PR #29526 not merged). The plugin must detect that instead of
-    # registering a callback that never fires.
+def test_hook_supported_pre_user_message_missing(po, monkeypatch):
+    # Hermetic: simulate a core without pre_user_message (upstream PR #29526
+    # not merged in that build) by stubbing the introspection, rather than
+    # asserting on whichever core this suite happens to run under.
+    monkeypatch.setattr(
+        po, "_hook_supported", lambda name: name != "pre_user_message"
+    )
     assert po._hook_supported("pre_user_message") is False
+    assert po._hook_supported("pre_llm_call") is True
 
 
 def test_hook_supported_optimistic_fallback(po, monkeypatch):
@@ -183,12 +187,18 @@ def test_hook_supported_optimistic_fallback(po, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_register_hooks_and_commands(po):
+def test_register_hooks_and_commands(po, monkeypatch):
+    # Hermetic: force the "pre_user_message unavailable" code path so the
+    # assertion is about our registration logic, not the host core.
+    monkeypatch.setattr(
+        po, "_hook_supported", lambda name: name != "pre_user_message"
+    )
     ctx = FakeCtx()
     po.register(ctx)
     assert "pre_gateway_dispatch" in ctx.hooks
     assert "transform_llm_output" in ctx.hooks
-    # Unsupported on this build — must NOT be registered (the fix under test).
+    # pre_user_message unavailable on this (simulated) core — must NOT be
+    # registered (the fix under test).
     assert "pre_user_message" not in ctx.hooks
     for cmd in (
         "prompt-optimizer",
