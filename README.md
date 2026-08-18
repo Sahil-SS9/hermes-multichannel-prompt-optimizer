@@ -263,11 +263,13 @@ git clone https://github.com/Sahil-SS9/hermes-multichannel-prompt-optimizer ~/.h
 hermes plugins enable prompt-optimizer
 ```
 
-Run the test suite:
+Run the test suite (from a directory *outside* the plugin — its hyphenated
+name is not a valid Python package identifier, which breaks pytest's
+package-root collection when the plugin dir is the rootdir):
 
 ```bash
-cd /path/to/hermes-agent
-venv/bin/pytest tests/plugins/test_prompt_optimizer_plugin.py -v
+cd /tmp && /path/to/hermes-agent/venv/bin/python -m pytest \
+    ~/.hermes/plugins/prompt-optimizer/tests/test_prompt_optimizer_plugin.py -v
 ```
 
 PRs welcome. Please include tests for any new hook semantics or scoring changes.
@@ -288,6 +290,10 @@ PRs welcome. Please include tests for any new hook semantics or scoring changes.
 ## Credits
 
 Built by [Sahil Saghir](https://github.com/Sahil-SS9) for the KENSEI / Octacon personal-agent stack. Released under MIT in case it's useful to anyone else running Hermes Agent in production.
+
+Contributors:
+
+- [benzntech](https://github.com/benzntech) — short-message fast-path, interactive-approval fix, timeout hardening, hook-registration guard, and the test suite (originating contributions in [PR #4](https://github.com/Sahil-SS9/hermes-multichannel-prompt-optimizer/pull/4)).
 
 ---
 

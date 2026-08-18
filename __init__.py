@@ -157,7 +157,26 @@ def _on_pre_gateway_dispatch(event=None, gateway=None, session_store=None, **kw)
         return None
     stripped = original.strip()
 
+    # Interactive approval replies ("y"/"n" on the same session) are short
+    # by nature — resolve the pending-approval state BEFORE the short-message
+    # fast-path so a one-word approval is never swallowed by it.
+    session_id = ""
+    if session_store is not None:
+        session_id = getattr(session_store, "session_id", "") or ""
+    sid = session_id or "unknown"
+    pending_approval = False
+    if mode == "interactive":
+        with _pending_lock:
+            pending_approval = sid in _pending_approvals
+
     if any(stripped.startswith(p) for p in BYPASS_PREFIXES):
+        return None
+
+    # Short prompts (< 5 words or < 35 chars) do not need LLM rewriting —
+    # except interactive approval replies, which are handled above.
+    words = stripped.split()
+    if (len(words) < 5 or len(stripped) < 35) and not pending_approval:
+        logger.info("prompt-optimizer: skipped — short message (%d words)", len(words))
         return None
 
     if is_skill_invocation(stripped):
@@ -600,12 +619,35 @@ def get_tui_preview(session_key: str, text: str, model: str = "",
 # Plugin registration
 # ---------------------------------------------------------------------------
 
+def _hook_supported(name: str) -> bool:
+    """True if the running Hermes core knows this hook name.
+
+    Hermes cores before upstream PR #29526 (NousResearch/hermes-agent)
+    lack ``pre_user_message``; registering it produces a startup warning and
+    a callback that never fires. The import is wrapped so a renamed or
+    removed core constant can never break plugin load — fall back to
+    optimistic registration (previous behaviour) if we can't introspect.
+    """
+    try:
+        from hermes_cli.plugins import VALID_HOOKS
+        return name in VALID_HOOKS
+    except Exception:
+        return True
+
+
 def register(ctx) -> None:
     global _ctx
     _ctx = ctx
     logger.info("prompt-optimizer: initializing")
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
-    ctx.register_hook("pre_user_message", _on_pre_user_message)
+    if _hook_supported("pre_user_message"):
+        ctx.register_hook("pre_user_message", _on_pre_user_message)
+    else:
+        logger.info(
+            "prompt-optimizer: 'pre_user_message' hook unavailable in this "
+            "Hermes build (upstream PR #29526 not merged) — CLI/TUI rewrite "
+            "disabled; gateway rewrite stays active via pre_gateway_dispatch"
+        )
     ctx.register_hook("transform_llm_output", _on_transform_llm_output)
     ctx.register_command(
         "prompt-optimizer", handler=_handle_prompt_optimizer,
