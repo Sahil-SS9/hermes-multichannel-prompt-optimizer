@@ -9,3 +9,6 @@ hooks:
 requires_env:
   - OPENROUTER_API_KEY
   - NOUS_API_KEY
+provides_hooks:
+  - pre_gateway_dispatch
+  - transform_llm_output
