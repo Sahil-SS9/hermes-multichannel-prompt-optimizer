@@ -32,11 +32,12 @@ import threading
 import time
 from typing import Any, Dict, Tuple
 
-from .engine import (
-    BYPASS_PREFIXES,
-    OPTIMIZER_TIMEOUT_S,
-    is_skill_invocation,
-    is_structured_command,
+try:
+    from .engine import (
+        BYPASS_PREFIXES,
+        OPTIMIZER_TIMEOUT_S,
+        is_skill_invocation,
+        is_structured_command,
     _analytics_rows,
     _build_full_report,
     _clip,
@@ -62,7 +63,46 @@ from .engine import (
     _wrap_block,
     _write_html_report,
     RewriteRecord,
-)
+    )
+except ImportError as _engine_import_err:
+    if not str(_engine_import_err).startswith("attempted relative import"):
+        raise
+    # Flat (package-less) import fallback: pytest may collect this directory's
+    # __init__.py as a top-level module (the hyphenated directory name is not a
+    # valid package identifier), so the relative import has no parent package.
+    # The production loader (hermes_cli.plugins_loader) always imports this
+    # module as hermes_plugins.<slug>, where the relative import succeeds.
+    from engine import (  # type: ignore[no-redef]
+        BYPASS_PREFIXES,
+        OPTIMIZER_TIMEOUT_S,
+        is_skill_invocation,
+        is_structured_command,
+        _analytics_rows,
+        _build_full_report,
+        _clip,
+        _coerce_text,
+        _delta_words,
+        _display_bucket,
+        _ensure_db,
+        _fetch_rewrites,
+        _format_diff,
+        _limit_from_args,
+        _normalise_args,
+        _period_start,
+        _quality_delta,
+        _record,
+        _render_analytics,
+        _render_comparisons,
+        _render_header,
+        _render_insight_bullets,
+        _render_suggestion_rows,
+        _render_summary_cards,
+        _run_optimizer,
+        _summary_for_period,
+        _wrap_block,
+        _write_html_report,
+        RewriteRecord,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -597,7 +637,12 @@ def get_tui_preview(session_key: str, text: str, model: str = "",
     if record is None:
         return {"status": "bypass", "reason": "no_rewrite_produced"}
 
-    from .engine import create_preview, PromptOptimizationPreview
+    try:
+        from .engine import create_preview, PromptOptimizationPreview
+    except ImportError as _err:
+        if not str(_err).startswith("attempted relative import"):
+            raise
+        from engine import create_preview, PromptOptimizationPreview  # type: ignore[no-redef]
     import dataclasses
     preview = PromptOptimizationPreview(
         session_key=session_key,
