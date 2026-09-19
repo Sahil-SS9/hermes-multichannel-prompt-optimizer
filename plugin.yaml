@@ -2,7 +2,10 @@ name: prompt-optimizer
 version: 1.0.0
 description: "Model-aware prompt rewriter with token-efficiency scoring, coaching metrics, and slash commands."
 author: "KENSEI / Octacon"
+# pre_user_message is NOT declared: it is absent from VALID_HOOKS on hermes-agent
+# main, so declaring it fails catalog validation with "unknown hook". register()
+# probes for it via _hook_supported() and only binds it on builds that have it,
+# where it surfaces as a benign "registration adds hook" warning.
 provides_hooks:
   - pre_gateway_dispatch
-  - pre_user_message
   - transform_llm_output
